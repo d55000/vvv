@@ -183,3 +183,10 @@ async def get_task_ffmpeg_log(task_id: str) -> Optional[str]:
     if task:
         return task.get("ffmpeg_log", "")
     return None
+
+
+async def increment_user_recordings(user_id: int) -> None:
+    """Increment total_recordings counter for a user."""
+    await db.users.update_one(
+        {"user_id": user_id}, {"$inc": {"total_recordings": 1}}
+    )

@@ -286,9 +286,7 @@ async def _process_task(task_data: Dict[str, Any]) -> None:
     })
 
     # Increment user's recording count
-    await db.db.users.update_one(
-        {"user_id": user_id}, {"$inc": {"total_recordings": 1}}
-    )
+    await db.increment_user_recordings(user_id)
 
     status_icon = "✅" if final_status == "done" else "⚠️"
     await _safe_edit(
