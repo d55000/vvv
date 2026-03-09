@@ -8,12 +8,14 @@ import motor.motor_asyncio
 from bot.config import (
     MONGO_URI,
     DB_NAME,
+    OWNER_ID,
     DEFAULT_MAX_DURATION,
     DEFAULT_MAX_TASKS,
     VERIFIED_MAX_DURATION,
     VERIFIED_MAX_TASKS,
     PREMIUM_MAX_DURATION,
     PREMIUM_MAX_TASKS,
+    ADMIN_MAX_TASKS,
 )
 
 _client: Optional[motor.motor_asyncio.AsyncIOMotorClient] = None
@@ -90,6 +92,12 @@ async def get_tier(user_id: int) -> str:
 
 
 async def tier_limits(user_id: int) -> dict:
+    # Owner and admins get elevated limits
+    if user_id == OWNER_ID or await is_admin(user_id):
+        return {
+            "max_duration": PREMIUM_MAX_DURATION,
+            "max_tasks": ADMIN_MAX_TASKS,
+        }
     tier = await get_tier(user_id)
     return TIER_CONFIG.get(tier, TIER_CONFIG["default"])
 
@@ -161,6 +169,24 @@ async def count_active_tasks() -> int:
     return await db.tasks.count_documents(
         {"status": {"$in": ["queued", "recording"]}}
     )
+
+
+async def delete_user_tasks(user_id: int) -> int:
+    """Delete all active tasks for *user_id*. Returns the count removed."""
+    db = get_db()
+    result = await db.tasks.delete_many(
+        {"user_id": user_id, "status": {"$in": ["queued", "recording"]}}
+    )
+    return result.deleted_count
+
+
+async def cleanup_stale_tasks() -> int:
+    """Remove all tasks still marked queued/recording (stale after restart)."""
+    db = get_db()
+    result = await db.tasks.delete_many(
+        {"status": {"$in": ["queued", "recording"]}}
+    )
+    return result.deleted_count
 
 
 # ── Token helpers (shortlink verification) ────────────────────────────────

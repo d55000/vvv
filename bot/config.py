@@ -33,9 +33,10 @@ VERIFIED_MAX_DURATION = int(os.getenv("VERIFIED_MAX_DURATION", "120")) * 60
 PREMIUM_MAX_DURATION = int(os.getenv("PREMIUM_MAX_DURATION", "720")) * 60
 
 # Parallel task caps per tier
-DEFAULT_MAX_TASKS = 1
+DEFAULT_MAX_TASKS = 2
 VERIFIED_MAX_TASKS = 2
 PREMIUM_MAX_TASKS = 3
+ADMIN_MAX_TASKS = int(os.getenv("ADMIN_MAX_TASKS", "10"))
 
 # Progress update interval (seconds)
 PROGRESS_INTERVAL = 7

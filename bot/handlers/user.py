@@ -31,6 +31,7 @@ from bot.utils.worker import (
     BOT_START_TIME,
     active_recordings,
     cancel_task,
+    cancel_user_tasks,
     enqueue,
     task_queue,
 )
@@ -104,6 +105,7 @@ def register(app: Client) -> None:
             '• `/rec <url>` – Record a stream\n'
             '• `/rec "URL or Channel" HH:MM:SS "name" .L#` – Custom recording\n'
             "• `/cancel <task_id>` – Cancel a recording\n"
+            "• `/cancelall` – Cancel all your recordings\n"
             "• `/mytasks` – List your active recordings\n"
             "• `/status` – Bot statistics\n"
             "• `/verify <token>` – Upgrade to Verified tier\n"
@@ -183,11 +185,14 @@ def register(app: Client) -> None:
             return
 
         # Pre-select audio track based on .L# flag
-        selected_audio = tracks["audio"][0]["index"] if tracks["audio"] else None
-        if args["lang_index"] is not None and tracks["audio"]:
-            li = args["lang_index"] - 1  # .L is 1-based
-            if 0 <= li < len(tracks["audio"]):
-                selected_audio = tracks["audio"][li]["index"]
+        selected_audio: set[int] = set()
+        if tracks["audio"]:
+            if args["lang_index"] is not None:
+                li = args["lang_index"] - 1  # .L is 1-based
+                if 0 <= li < len(tracks["audio"]):
+                    selected_audio.add(tracks["audio"][li]["index"])
+            if not selected_audio:
+                selected_audio.add(tracks["audio"][0]["index"])
 
         # Store state for this chat
         _probe_cache[message.from_user.id] = {
@@ -229,12 +234,21 @@ def register(app: Client) -> None:
         if not state:
             await cq.answer("Session expired. Use /rec again.", show_alert=True)
             return
-        state["selected_audio"] = idx
+        sel: set = state["selected_audio"]
+        if idx in sel:
+            if len(sel) > 1:
+                sel.discard(idx)
+                await cq.answer(f"Audio track #{idx} deselected")
+            else:
+                await cq.answer("At least one audio track must be selected.", show_alert=True)
+                return
+        else:
+            sel.add(idx)
+            await cq.answer(f"Audio track #{idx} selected")
         await cq.message.edit_text(
             _build_track_selection_text(state["tracks"]),
             reply_markup=_build_track_keyboard(uid, state["tracks"]),
         )
-        await cq.answer(f"Audio track #{idx} selected")
 
     @app.on_callback_query(filters.regex(r"^start_rec$"))
     async def cb_start_rec(client: Client, cq: CallbackQuery) -> None:
@@ -250,6 +264,8 @@ def register(app: Client) -> None:
         # Use custom duration if provided, otherwise tier max
         duration = state.get("custom_duration") or limits["max_duration"]
 
+        audio_list = sorted(state["selected_audio"])
+
         task = {
             "task_id": task_id,
             "user_id": uid,
@@ -257,7 +273,7 @@ def register(app: Client) -> None:
             "url": state["url"],
             "duration": duration,
             "video_map": state["selected_video"],
-            "audio_map": state["selected_audio"],
+            "audio_map": audio_list,
             "status": "queued",
             "custom_filename": state.get("custom_filename"),
         }
@@ -268,12 +284,13 @@ def register(app: Client) -> None:
         dur_h, dur_min = divmod(dur_min, 60)
         dur_str = f"{dur_h}h {dur_min}m {dur_sec}s" if dur_h else f"{dur_min}m {dur_sec}s"
 
+        audio_str = ", ".join(f"#{a}" for a in audio_list)
         lines = [
             f"✅ **Task queued!**",
             f"🆔 Task ID: `{task_id}`",
             f"⏱ Duration: {dur_str}",
             f"📺 Video: track #{state['selected_video']}",
-            f"🔊 Audio: track #{state['selected_audio']}",
+            f"🔊 Audio: track(s) {audio_str}",
         ]
         if state.get("custom_filename"):
             lines.append(f"📝 Filename: {state['custom_filename']}")
@@ -290,7 +307,7 @@ def register(app: Client) -> None:
             await message.reply("⚠️ Usage: `/cancel <task_id>`")
             return
         task_id = parts[1].strip()
-        if cancel_task(task_id):
+        if await cancel_task(task_id):
             await message.reply(f"🛑 Task `{task_id}` is being cancelled.")
         else:
             await message.reply(f"⚠️ No active task with ID `{task_id}` found.")
@@ -300,11 +317,21 @@ def register(app: Client) -> None:
     @app.on_callback_query(filters.regex(r"^cancel:"))
     async def cb_cancel(client: Client, cq: CallbackQuery) -> None:
         task_id = cq.data.split(":", 1)[1]
-        if cancel_task(task_id):
+        if await cancel_task(task_id):
             await cq.answer("Task cancelled!")
             await cq.message.edit_text(f"🛑 Task `{task_id}` cancelled.")
         else:
             await cq.answer("Task not found or already finished.", show_alert=True)
+
+    # ── /cancelall ────────────────────────────────────────────────────────
+
+    @app.on_message(filters.command("cancelall") & filters.private)
+    async def cmd_cancelall(client: Client, message: Message) -> None:
+        count = await cancel_user_tasks(message.from_user.id)
+        if count:
+            await message.reply(f"🛑 Cancelled **{count}** task(s).")
+        else:
+            await message.reply("📭 You have no active tasks to cancel.")
 
     # ── /mytasks ──────────────────────────────────────────────────────────
 
@@ -455,11 +482,14 @@ async def _start_probe_flow(
         await status.edit("⚠️ No video/audio tracks found in the stream.")
         return
 
-    selected_audio = tracks["audio"][0]["index"] if tracks["audio"] else None
-    if lang_index is not None and tracks["audio"]:
-        li = lang_index - 1
-        if 0 <= li < len(tracks["audio"]):
-            selected_audio = tracks["audio"][li]["index"]
+    selected_audio: set[int] = set()
+    if tracks["audio"]:
+        if lang_index is not None:
+            li = lang_index - 1
+            if 0 <= li < len(tracks["audio"]):
+                selected_audio.add(tracks["audio"][li]["index"])
+        if not selected_audio:
+            selected_audio.add(tracks["audio"][0]["index"])
 
     _probe_cache[user_id] = {
         "url": url,
@@ -497,7 +527,7 @@ def _build_track_keyboard(
 ) -> InlineKeyboardMarkup:
     state = _probe_cache.get(uid, {})
     sel_v = state.get("selected_video")
-    sel_a = state.get("selected_audio")
+    sel_a: set = state.get("selected_audio", set())
     rows: list[list[InlineKeyboardButton]] = []
 
     # Video buttons
@@ -512,11 +542,11 @@ def _build_track_keyboard(
     if vrow:
         rows.append(vrow)
 
-    # Audio buttons
+    # Audio buttons (multi‑select)
     arow: list[InlineKeyboardButton] = []
     for a in tracks["audio"]:
         label = a["language"].upper()
-        if a["index"] == sel_a:
+        if a["index"] in sel_a:
             label = f"✅ {label}"
         arow.append(
             InlineKeyboardButton(label, callback_data=f"sel_a:{a['index']}")

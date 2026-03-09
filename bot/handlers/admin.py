@@ -96,7 +96,7 @@ def register(app: Client) -> None:
             await cq.answer("Admins only.", show_alert=True)
             return
         task_id = cq.data.split(":", 1)[1]
-        if cancel_task(task_id):
+        if await cancel_task(task_id):
             await cq.answer(f"Task {task_id} cancelled.")
             await _edit_tasks_page(client, cq.message, page=0)
         else:

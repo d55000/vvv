@@ -6,7 +6,7 @@ import os
 from pyrogram import Client, idle
 
 from bot.config import API_HASH, API_ID, BOT_TOKEN, DOWNLOAD_DIR, NUM_WORKERS
-from bot.db.database import connect
+from bot.db.database import cleanup_stale_tasks, connect
 from bot.handlers import admin, user
 from bot.utils.worker import start_workers
 
@@ -31,6 +31,11 @@ async def main() -> None:
     # Database
     await connect()
     log.info("MongoDB connected.")
+
+    # Remove stale tasks from a previous run
+    stale = await cleanup_stale_tasks()
+    if stale:
+        log.info("Cleaned up %d stale task(s) from DB.", stale)
 
     # Register handlers
     user.register(app)

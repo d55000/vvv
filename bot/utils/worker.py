@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.config import PROGRESS_INTERVAL
-from bot.db.database import save_task, delete_task, get_task
+from bot.db.database import save_task, delete_task, get_task, user_active_tasks, delete_user_tasks
 from bot.utils.ffmpeg import RecordingProcess, format_progress
 
 if TYPE_CHECKING:
@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 # Global state
 task_queue: asyncio.Queue = asyncio.Queue()
 active_recordings: dict[str, RecordingProcess] = {}
+_cancelled_tasks: set[str] = set()
 _workers: list[asyncio.Task] = []
 BOT_START_TIME: float = 0.0
 
@@ -65,11 +66,20 @@ async def _worker(client: "Client") -> None:
     while True:
         task = await task_queue.get()
         task_id: str = task["task_id"]
+
+        # Skip tasks cancelled while queued
+        if task_id in _cancelled_tasks:
+            _cancelled_tasks.discard(task_id)
+            task_queue.task_done()
+            continue
+
         chat_id: int = task["chat_id"]
         url: str = task["url"]
         duration: int = task["duration"]
         video_map: int = task.get("video_map", 0)
-        audio_map: int = task.get("audio_map", 1)
+        audio_map = task.get("audio_map", 1)
+        if isinstance(audio_map, int):
+            audio_map = [audio_map]
         custom_filename: str | None = task.get("custom_filename")
 
         # Update status in DB
@@ -155,10 +165,39 @@ def start_workers(client: "Client", num_workers: int) -> None:
     log.info("Started %d recording workers", num_workers)
 
 
-def cancel_task(task_id: str) -> bool:
-    """Cancel a running task. Returns True if found."""
+async def cancel_task(task_id: str) -> bool:
+    """Cancel a running or queued task. Returns True if found."""
+    # Active recording – kill the ffmpeg process
     rec = active_recordings.get(task_id)
     if rec:
         rec.cancel()
         return True
+    # Queued or stale in DB – mark for skip and remove from DB
+    task = await get_task(task_id)
+    if task:
+        _cancelled_tasks.add(task_id)
+        await delete_task(task_id)
+        return True
     return False
+
+
+async def cancel_user_tasks(user_id: int) -> int:
+    """Cancel every active task belonging to *user_id*. Returns count."""
+    count = 0
+    # Cancel active recordings for this user
+    for tid, rec in list(active_recordings.items()):
+        task = await get_task(tid)
+        if task and task.get("user_id") == user_id:
+            rec.cancel()
+            count += 1
+    # Cancel remaining queued / stale tasks in DB
+    tasks = await user_active_tasks(user_id)
+    for t in tasks:
+        tid = t["task_id"]
+        if tid not in active_recordings:
+            _cancelled_tasks.add(tid)
+            count += 1
+    # Bulk-delete from DB
+    count_db = await delete_user_tasks(user_id)
+    # Return the larger of the two counts (avoid double-counting)
+    return max(count, count_db)

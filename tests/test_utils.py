@@ -193,7 +193,8 @@ def test_tier_config():
     for tier in TIER_CONFIG.values():
         assert "max_duration" in tier
         assert "max_tasks" in tier
-    assert TIER_CONFIG["default"]["max_tasks"] < TIER_CONFIG["premium"]["max_tasks"]
+    assert TIER_CONFIG["default"]["max_tasks"] <= TIER_CONFIG["premium"]["max_tasks"]
+    assert TIER_CONFIG["default"]["max_tasks"] == 2
 
 
 # ── M3U converter ─────────────────────────────────────────────────────────
@@ -345,3 +346,45 @@ def test_parse_rec_args_lang_case_insensitive():
     result = parse_rec_args("/rec https://example.com/live.m3u8 .l3")
     assert result is not None
     assert result["lang_index"] == 3
+
+
+# ── Multi‑audio _build_record_cmd ─────────────────────────────────────────
+
+
+def test_build_record_cmd_multi_audio():
+    cmd = _build_record_cmd(
+        "http://example.com/stream.m3u8",
+        "/tmp/out_%03d.mp4",
+        duration=600,
+        video_map=0,
+        audio_map=[2, 3],
+    )
+    assert cmd[0] == "ffmpeg"
+    # Should have three -map entries: one video + two audio
+    map_indices = [i for i, x in enumerate(cmd) if x == "-map"]
+    assert len(map_indices) == 3
+    assert cmd[map_indices[0] + 1] == "0:0"
+    assert cmd[map_indices[1] + 1] == "0:2"
+    assert cmd[map_indices[2] + 1] == "0:3"
+
+
+def test_build_record_cmd_single_audio_int():
+    """Backward-compatible: single int audio_map still works."""
+    cmd = _build_record_cmd(
+        "http://example.com/stream.m3u8",
+        "/tmp/out_%03d.mp4",
+        duration=60,
+        video_map=0,
+        audio_map=1,
+    )
+    map_indices = [i for i, x in enumerate(cmd) if x == "-map"]
+    assert len(map_indices) == 2
+    assert cmd[map_indices[1] + 1] == "0:1"
+
+
+# ── Admin task limit config ──────────────────────────────────────────────
+
+
+def test_admin_max_tasks_config():
+    from bot.config import ADMIN_MAX_TASKS
+    assert ADMIN_MAX_TASKS >= 10

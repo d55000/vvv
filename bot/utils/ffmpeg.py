@@ -78,16 +78,20 @@ def _build_record_cmd(
     output_template: str,
     duration: int,
     video_map: int = 0,
-    audio_map: int = 1,
+    audio_map: int | list[int] = 1,
     segment_size_bytes: int = int(MAX_FILE_SIZE),
 ) -> list[str]:
     """Build the FFmpeg command list for segmented recording."""
-    return [
+    audio_maps = audio_map if isinstance(audio_map, list) else [audio_map]
+    cmd = [
         "ffmpeg",
         "-y",
         "-i", url,
         "-map", f"0:{video_map}",
-        "-map", f"0:{audio_map}",
+    ]
+    for am in audio_maps:
+        cmd.extend(["-map", f"0:{am}"])
+    cmd.extend([
         "-c", "copy",
         "-t", str(duration),
         "-f", "segment",
@@ -97,7 +101,8 @@ def _build_record_cmd(
         "-reset_timestamps", "1",
         "-progress", "pipe:1",
         output_template,
-    ]
+    ])
+    return cmd
 
 
 class RecordingProcess:
@@ -119,7 +124,7 @@ class RecordingProcess:
         task_id: str,
         duration: int,
         video_map: int = 0,
-        audio_map: int = 1,
+        audio_map: int | list[int] = 1,
         filename_prefix: str | None = None,
     ) -> None:
         self.output_dir = os.path.join(DOWNLOAD_DIR, task_id)
