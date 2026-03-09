@@ -162,7 +162,10 @@ def register(app: Client) -> None:
         custom_duration = args["duration_sec"]
         if custom_duration is not None:
             if custom_duration <= 0:
-                await message.reply("⚠️ Duration must be greater than 0.")
+                await message.reply(
+                    "⚠️ Duration must be greater than 0.\n"
+                    "Use `HH:MM:SS` format, e.g. `00:05:00` for 5 minutes."
+                )
                 return
             custom_duration = min(custom_duration, limits["max_duration"])
 

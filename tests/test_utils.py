@@ -316,6 +316,7 @@ def test_parse_rec_args_duration_only():
     assert result["source"] == "https://example.com/live.m3u8"
     assert result["duration_sec"] == 5400
     assert result["filename"] is None
+    assert result["lang_index"] is None
 
 
 def test_parse_rec_args_lang_only():
