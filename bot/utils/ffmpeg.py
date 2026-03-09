@@ -168,7 +168,9 @@ class RecordingProcess:
         self.cancelled = True
         if self.proc and self.proc.returncode is None:
             try:
-                os.kill(self.proc.pid, signal.SIGTERM)
+                pid = self.proc.pid
+                if pid is not None:
+                    os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
 

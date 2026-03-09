@@ -16,6 +16,7 @@ from pyrogram.types import (
 from bot.config import OWNER_ID
 from bot.db.database import (
     consume_token,
+    count_active_tasks,
     get_tier,
     get_user,
     set_tier,
@@ -28,7 +29,6 @@ from bot.utils.worker import (
     BOT_START_TIME,
     active_recordings,
     cancel_task,
-    count_active_tasks,
     enqueue,
     task_queue,
 )
@@ -286,9 +286,8 @@ def register(app: Client) -> None:
         if not url:
             await cq.answer("No URL for this channel.", show_alert=True)
             return
-        # Trigger the /rec flow programmatically
-        await cq.message.reply(f"/rec {url}")
-        await cq.answer()
+        await cq.answer("Analysing stream…")
+        await _start_probe_flow(client, cq.from_user.id, cq.message.chat.id, url)
 
     # ── /channel <name> ──────────────────────────────────────────────────
 
@@ -308,12 +307,50 @@ def register(app: Client) -> None:
             return
         # Trigger recording with probe
         await message.reply(f"Found **{ch.get('name', '')}** → starting analysis…")
-        # Re-use cmd_rec logic by constructing a synthetic message text
-        message.text = f"/rec {url}"
-        await cmd_rec(client, message)
+        await _start_probe_flow(client, message.from_user.id, message.chat.id, url)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
+
+
+async def _start_probe_flow(
+    client: Client, user_id: int, chat_id: int, url: str
+) -> None:
+    """Run ffprobe on *url*, parse tracks, and send the selection keyboard."""
+    limits = await tier_limits(user_id)
+    active = await user_active_tasks(user_id)
+    if len(active) >= limits["max_tasks"]:
+        await client.send_message(
+            chat_id,
+            f"⚠️ You already have **{len(active)}** active task(s). "
+            f"Your tier allows **{limits['max_tasks']}**.",
+        )
+        return
+
+    status = await client.send_message(chat_id, "🔍 **Analysing stream…** Please wait.")
+
+    try:
+        probe_data = await probe_streams(url)
+    except Exception as exc:
+        await status.edit(f"❌ **Probe failed:** `{exc}`")
+        return
+
+    tracks = parse_tracks(probe_data)
+    if not tracks["video"] and not tracks["audio"]:
+        await status.edit("⚠️ No video/audio tracks found in the stream.")
+        return
+
+    _probe_cache[user_id] = {
+        "url": url,
+        "tracks": tracks,
+        "selected_video": tracks["video"][0]["index"] if tracks["video"] else None,
+        "selected_audio": tracks["audio"][0]["index"] if tracks["audio"] else None,
+    }
+
+    await status.edit(
+        _build_track_selection_text(tracks),
+        reply_markup=_build_track_keyboard(user_id, tracks),
+    )
 
 
 def _build_track_selection_text(tracks: dict) -> str:
