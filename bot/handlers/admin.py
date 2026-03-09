@@ -157,8 +157,8 @@ def register(app: Client) -> None:
         # Clean up the downloaded M3U file
         try:
             os.remove(m3u_path)
-        except OSError:
-            pass
+        except OSError as exc:
+            log.warning("Failed to remove temp M3U file %s: %s", m3u_path, exc)
 
         if result is None:
             await status.edit(

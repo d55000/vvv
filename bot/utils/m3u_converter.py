@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 
 
 def slugify(text: str) -> str:
-    """Convert *text* into a slug suitable for a dictionary key.
+    """Convert *text* into a URL/key-safe slug.
 
     Removes common country-code prefixes (e.g. ``IN: ``), lowercases the
     string, strips non-word characters, and replaces whitespace/hyphens
@@ -71,7 +71,7 @@ def convert_m3u_to_json(
                 'name': channel_name,
             }
 
-        elif line.startswith('http') and 'name' in current_info:
+        elif (line.startswith('http://') or line.startswith('https://')) and 'name' in current_info:
             channels.append({
                 "name": current_info['name'],
                 "url": line,
