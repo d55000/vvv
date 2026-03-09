@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pyrogram==2.0.106
+tgcrypto
+motor==3.3.1
+hachoir
+Pillow
+python-dotenv
+aiofiles
+aiohttp

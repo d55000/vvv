@@ -1,0 +1,32 @@
+[
+  {
+    "name": "BBC News",
+    "url": "https://vs-hls-push-ww-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_news_channel_hd/t=3840/v=pv14/b=5070016/main.m3u8",
+    "category": "News",
+    "logo": ""
+  },
+  {
+    "name": "NASA TV",
+    "url": "https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8",
+    "category": "Science",
+    "logo": ""
+  },
+  {
+    "name": "DW News",
+    "url": "https://dwamdstream102.akamaized.net/hls/live/2015525/dwstream102/index.m3u8",
+    "category": "News",
+    "logo": ""
+  },
+  {
+    "name": "Al Jazeera English",
+    "url": "https://live-hls-web-aje.getaj.net/AJE/index.m3u8",
+    "category": "News",
+    "logo": ""
+  },
+  {
+    "name": "France 24 English",
+    "url": "https://stream.france24.com/hls/live/2037986/F24_EN_LO_HLS/master.m3u8",
+    "category": "News",
+    "logo": ""
+  }
+]
