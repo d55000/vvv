@@ -3,7 +3,7 @@
 import logging
 import os
 
-from pyrogram import Client
+from pyrogram import Client, idle
 
 from bot.config import API_HASH, API_ID, BOT_TOKEN, DOWNLOAD_DIR, NUM_WORKERS
 from bot.db.database import connect
@@ -40,7 +40,7 @@ async def main() -> None:
     async with app:
         start_workers(app, NUM_WORKERS)
         log.info("Bot is running. Press Ctrl+C to stop.")
-        await app.idle()
+        await idle()
 
 
 if __name__ == "__main__":
