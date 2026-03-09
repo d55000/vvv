@@ -70,6 +70,7 @@ async def _worker(client: "Client") -> None:
         duration: int = task["duration"]
         video_map: int = task.get("video_map", 0)
         audio_map: int = task.get("audio_map", 1)
+        custom_filename: str | None = task.get("custom_filename")
 
         # Update status in DB
         task["status"] = "recording"
@@ -83,7 +84,8 @@ async def _worker(client: "Client") -> None:
         )
 
         try:
-            await rec.start(url, task_id, duration, video_map, audio_map)
+            await rec.start(url, task_id, duration, video_map, audio_map,
+                            filename_prefix=custom_filename)
 
             progress_reader = asyncio.create_task(rec.read_progress())
             progress_updater = asyncio.create_task(

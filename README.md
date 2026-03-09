@@ -58,6 +58,7 @@ python main.py
 |---------|-------------|
 | `/start` | Welcome message |
 | `/rec <url>` | Analyse stream & select tracks |
+| `/rec "<url_or_channel>" HH:MM:SS "filename" .L#` | Record with custom duration, filename, and language track |
 | `/cancel <task_id>` | Cancel a recording |
 | `/mytasks` | List your active recordings |
 | `/status` | Bot uptime & stats |
@@ -118,7 +119,7 @@ pytest tests/ -v
 
 ## Example Usage
 
-### Recording a stream
+### Recording a stream (basic)
 
 ```
 /rec https://example.com/live/stream.m3u8
@@ -126,6 +127,31 @@ pytest tests/ -v
 
 The bot will analyse the stream and show an interactive track selection keyboard.
 Pick your preferred video resolution and audio language, then tap **✅ Start Recording**.
+
+### Recording with custom duration and filename
+
+```
+/rec "https://example.com/stream.m3u8" 00:05:00 "My Stream"
+```
+
+Records for 5 minutes and names the output files `My_Stream_000.mp4`, etc.
+Duration is capped at your tier's maximum.
+
+### Recording a channel by name with options
+
+```
+/rec "Disney Channel (4K)" 00:00:10 "My Cartoon" .L1
+```
+
+Looks up **Disney Channel (4K)** in the loaded channel lists, records for 10 seconds
+with the first audio language track pre-selected, and names files `My_Cartoon_000.mp4`.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `"URL or Channel"` | ✅ | Stream URL or channel name (quote if it contains spaces) |
+| `HH:MM:SS` | ❌ | Custom duration (capped at your tier's max) |
+| `"filename"` | ❌ | Custom output filename prefix |
+| `.L#` | ❌ | Pre-select the Nth audio/language track (1-based) |
 
 ### Searching & recording from channel lists
 

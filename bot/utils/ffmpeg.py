@@ -120,10 +120,18 @@ class RecordingProcess:
         duration: int,
         video_map: int = 0,
         audio_map: int = 1,
+        filename_prefix: str | None = None,
     ) -> None:
         self.output_dir = os.path.join(DOWNLOAD_DIR, task_id)
         os.makedirs(self.output_dir, exist_ok=True)
-        self.output_template = os.path.join(self.output_dir, "part_%03d.mp4")
+
+        # Sanitise the user-supplied prefix; fall back to "part"
+        if filename_prefix:
+            safe = re.sub(r'[^\w\s\-]', '', filename_prefix).strip()
+            prefix = safe.replace(" ", "_") if safe else "part"
+        else:
+            prefix = "part"
+        self.output_template = os.path.join(self.output_dir, f"{prefix}_%03d.mp4")
 
         cmd = _build_record_cmd(
             url, self.output_template, duration, video_map, audio_map

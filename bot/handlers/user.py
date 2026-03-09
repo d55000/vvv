@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import re
+import shlex
 import time
 import uuid
 
@@ -38,6 +40,54 @@ log = logging.getLogger(__name__)
 # Temporary cache: chat_id → probe result & selection state
 _probe_cache: dict[int, dict] = {}
 
+# ── /rec argument parser ─────────────────────────────────────────────────
+
+_DURATION_RE = re.compile(r"^\d{1,2}:\d{2}:\d{2}$")
+_LANG_RE = re.compile(r"^\.L(\d+)$", re.IGNORECASE)
+
+
+def parse_rec_args(text: str) -> dict | None:
+    """Parse ``/rec`` arguments.
+
+    Accepted format::
+
+        /rec "<URL or Channel>" [HH:MM:SS] ["filename"] [.L#]
+
+    Returns a dict with keys *source*, *duration_sec*, *filename*,
+    *lang_index* or ``None`` when the source is missing.
+    """
+    parts = text.split(None, 1)
+    if len(parts) < 2:
+        return None
+
+    try:
+        tokens = shlex.split(parts[1])
+    except ValueError:
+        # Unbalanced quotes – treat entire remainder as the source
+        tokens = [parts[1].strip()]
+
+    if not tokens:
+        return None
+
+    result: dict = {
+        "source": tokens[0],
+        "duration_sec": None,
+        "filename": None,
+        "lang_index": None,
+    }
+
+    for token in tokens[1:]:
+        m = _LANG_RE.match(token)
+        if m:
+            result["lang_index"] = int(m.group(1))
+        elif _DURATION_RE.match(token):
+            h, mn, s = token.split(":")
+            result["duration_sec"] = int(h) * 3600 + int(mn) * 60 + int(s)
+        elif result["filename"] is None:
+            result["filename"] = token
+
+    return result
+
 
 def register(app: Client) -> None:
     """Register all user‑facing handlers on *app*."""
@@ -48,10 +98,11 @@ def register(app: Client) -> None:
     async def cmd_start(client: Client, message: Message) -> None:
         await message.reply(
             "👋 **Welcome to the M3U8 Recorder Bot!**\n\n"
-            "📹 I can record M3U8/M3U live streams and send them to you as "
+            "📹 I can record M3U8/M3U live streams and send them as "
             "auto‑split MP4 files.\n\n"
             "**Commands:**\n"
-            "• `/rec <m3u8_url>` – Analyse & record a stream\n"
+            '• `/rec <url>` – Record a stream\n'
+            '• `/rec "URL or Channel" HH:MM:SS "name" .L#` – Custom recording\n'
             "• `/cancel <task_id>` – Cancel a recording\n"
             "• `/mytasks` – List your active recordings\n"
             "• `/status` – Bot statistics\n"
@@ -65,12 +116,37 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("rec") & filters.private)
     async def cmd_rec(client: Client, message: Message) -> None:
-        parts = message.text.split(None, 1)
-        if len(parts) < 2:
-            await message.reply("⚠️ Usage: `/rec <m3u8_url>`")
+        args = parse_rec_args(message.text)
+        if not args:
+            await message.reply(
+                "⚠️ **Usage:**\n"
+                '`/rec <url>`\n'
+                '`/rec "URL or Channel" HH:MM:SS "filename" .L#`\n\n'
+                "**Examples:**\n"
+                '`/rec https://example.com/stream.m3u8`\n'
+                '`/rec "Disney Channel (4K)" 00:00:10 "My Cartoon" .L1`\n'
+                '`/rec "https://example.com/stream.m3u8" 00:05:00 "My Stream"`'
+            )
             return
 
-        url = parts[1].strip()
+        source = args["source"]
+
+        # Resolve channel name → URL when source is not an HTTP link
+        if source.startswith(("http://", "https://")):
+            url = source
+        else:
+            ch = get_channel_by_name(source)
+            if not ch:
+                await message.reply(
+                    f"⚠️ Channel **{source}** not found in any loaded list."
+                )
+                return
+            url = ch.get("url", "")
+            if not url:
+                await message.reply(
+                    f"⚠️ Channel **{source}** has no URL."
+                )
+                return
 
         # Check tier limits
         limits = await tier_limits(message.from_user.id)
@@ -81,6 +157,14 @@ def register(app: Client) -> None:
                 f"Your tier allows **{limits['max_tasks']}**."
             )
             return
+
+        # Cap custom duration at tier max (0 or negative treated as invalid)
+        custom_duration = args["duration_sec"]
+        if custom_duration is not None:
+            if custom_duration <= 0:
+                await message.reply("⚠️ Duration must be greater than 0.")
+                return
+            custom_duration = min(custom_duration, limits["max_duration"])
 
         status = await message.reply("🔍 **Analysing stream…** Please wait.")
 
@@ -95,12 +179,21 @@ def register(app: Client) -> None:
             await status.edit("⚠️ No video/audio tracks found in the stream.")
             return
 
+        # Pre-select audio track based on .L# flag
+        selected_audio = tracks["audio"][0]["index"] if tracks["audio"] else None
+        if args["lang_index"] is not None and tracks["audio"]:
+            li = args["lang_index"] - 1  # .L is 1-based
+            if 0 <= li < len(tracks["audio"]):
+                selected_audio = tracks["audio"][li]["index"]
+
         # Store state for this chat
         _probe_cache[message.from_user.id] = {
             "url": url,
             "tracks": tracks,
             "selected_video": tracks["video"][0]["index"] if tracks["video"] else None,
-            "selected_audio": tracks["audio"][0]["index"] if tracks["audio"] else None,
+            "selected_audio": selected_audio,
+            "custom_duration": custom_duration,
+            "custom_filename": args["filename"],
         }
 
         await status.edit(
@@ -151,25 +244,38 @@ def register(app: Client) -> None:
         limits = await tier_limits(uid)
         task_id = uuid.uuid4().hex[:10]
 
+        # Use custom duration if provided, otherwise tier max
+        duration = state.get("custom_duration") or limits["max_duration"]
+
         task = {
             "task_id": task_id,
             "user_id": uid,
             "chat_id": cq.message.chat.id,
             "url": state["url"],
-            "duration": limits["max_duration"],
+            "duration": duration,
             "video_map": state["selected_video"],
             "audio_map": state["selected_audio"],
             "status": "queued",
+            "custom_filename": state.get("custom_filename"),
         }
 
         await enqueue(task)
-        await cq.message.edit_text(
-            f"✅ **Task queued!**\n"
-            f"🆔 Task ID: `{task_id}`\n"
-            f"⏱ Max duration: {limits['max_duration'] // 60} min\n"
-            f"📺 Video: track #{state['selected_video']}\n"
-            f"🔊 Audio: track #{state['selected_audio']}\n"
-        )
+
+        dur_min, dur_sec = divmod(duration, 60)
+        dur_h, dur_min = divmod(dur_min, 60)
+        dur_str = f"{dur_h}h {dur_min}m {dur_sec}s" if dur_h else f"{dur_min}m {dur_sec}s"
+
+        lines = [
+            f"✅ **Task queued!**",
+            f"🆔 Task ID: `{task_id}`",
+            f"⏱ Duration: {dur_str}",
+            f"📺 Video: track #{state['selected_video']}",
+            f"🔊 Audio: track #{state['selected_audio']}",
+        ]
+        if state.get("custom_filename"):
+            lines.append(f"📝 Filename: {state['custom_filename']}")
+
+        await cq.message.edit_text("\n".join(lines))
         await cq.answer("Recording queued!")
 
     # ── /cancel <task_id> ─────────────────────────────────────────────────
@@ -314,7 +420,13 @@ def register(app: Client) -> None:
 
 
 async def _start_probe_flow(
-    client: Client, user_id: int, chat_id: int, url: str
+    client: Client,
+    user_id: int,
+    chat_id: int,
+    url: str,
+    custom_duration: int | None = None,
+    custom_filename: str | None = None,
+    lang_index: int | None = None,
 ) -> None:
     """Run ffprobe on *url*, parse tracks, and send the selection keyboard."""
     limits = await tier_limits(user_id)
@@ -340,11 +452,19 @@ async def _start_probe_flow(
         await status.edit("⚠️ No video/audio tracks found in the stream.")
         return
 
+    selected_audio = tracks["audio"][0]["index"] if tracks["audio"] else None
+    if lang_index is not None and tracks["audio"]:
+        li = lang_index - 1
+        if 0 <= li < len(tracks["audio"]):
+            selected_audio = tracks["audio"][li]["index"]
+
     _probe_cache[user_id] = {
         "url": url,
         "tracks": tracks,
         "selected_video": tracks["video"][0]["index"] if tracks["video"] else None,
-        "selected_audio": tracks["audio"][0]["index"] if tracks["audio"] else None,
+        "selected_audio": selected_audio,
+        "custom_duration": custom_duration,
+        "custom_filename": custom_filename,
     }
 
     await status.edit(

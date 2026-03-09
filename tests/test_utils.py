@@ -21,6 +21,7 @@ from bot.utils.channels import (
 )
 from bot.db.database import TIER_CONFIG
 from bot.utils.m3u_converter import convert_m3u_to_json, slugify
+from bot.handlers.user import parse_rec_args
 
 
 # ── FFprobe parse_tracks ──────────────────────────────────────────────────
@@ -277,3 +278,69 @@ def test_convert_m3u_compatible_with_channel_search(tmp_path, monkeypatch):
     assert len(results) == 1
     assert results[0]["name"] == "IN: BBC News"
     assert results[0]["url"] == "http://bbc.example.com/live.m3u8"
+
+
+# ── parse_rec_args ────────────────────────────────────────────────────────
+
+
+def test_parse_rec_args_url_only():
+    result = parse_rec_args("/rec https://example.com/stream.m3u8")
+    assert result is not None
+    assert result["source"] == "https://example.com/stream.m3u8"
+    assert result["duration_sec"] is None
+    assert result["filename"] is None
+    assert result["lang_index"] is None
+
+
+def test_parse_rec_args_full():
+    result = parse_rec_args('/rec "Disney Channel (4K)" 00:00:10 "My Cartoon" .L1')
+    assert result is not None
+    assert result["source"] == "Disney Channel (4K)"
+    assert result["duration_sec"] == 10
+    assert result["filename"] == "My Cartoon"
+    assert result["lang_index"] == 1
+
+
+def test_parse_rec_args_url_with_duration_and_filename():
+    result = parse_rec_args('/rec "https://example.com/stream.m3u8" 00:05:00 "My Stream"')
+    assert result is not None
+    assert result["source"] == "https://example.com/stream.m3u8"
+    assert result["duration_sec"] == 300
+    assert result["filename"] == "My Stream"
+    assert result["lang_index"] is None
+
+
+def test_parse_rec_args_duration_only():
+    result = parse_rec_args("/rec https://example.com/live.m3u8 01:30:00")
+    assert result is not None
+    assert result["source"] == "https://example.com/live.m3u8"
+    assert result["duration_sec"] == 5400
+    assert result["filename"] is None
+
+
+def test_parse_rec_args_lang_only():
+    result = parse_rec_args("/rec https://example.com/live.m3u8 .L2")
+    assert result is not None
+    assert result["source"] == "https://example.com/live.m3u8"
+    assert result["lang_index"] == 2
+    assert result["duration_sec"] is None
+
+
+def test_parse_rec_args_no_args():
+    assert parse_rec_args("/rec") is None
+
+
+def test_parse_rec_args_empty_string():
+    assert parse_rec_args("/rec   ") is None
+
+
+def test_parse_rec_args_channel_name_unquoted():
+    result = parse_rec_args("/rec BBC")
+    assert result is not None
+    assert result["source"] == "BBC"
+
+
+def test_parse_rec_args_lang_case_insensitive():
+    result = parse_rec_args("/rec https://example.com/live.m3u8 .l3")
+    assert result is not None
+    assert result["lang_index"] == 3
