@@ -20,6 +20,7 @@ from bot.utils.channels import (
     search_channels,
 )
 from bot.db.database import TIER_CONFIG
+from bot.utils.m3u_converter import convert_m3u_to_json, slugify
 
 
 # ── FFprobe parse_tracks ──────────────────────────────────────────────────
@@ -192,3 +193,87 @@ def test_tier_config():
         assert "max_duration" in tier
         assert "max_tasks" in tier
     assert TIER_CONFIG["default"]["max_tasks"] < TIER_CONFIG["premium"]["max_tasks"]
+
+
+# ── M3U converter ─────────────────────────────────────────────────────────
+
+SAMPLE_M3U = """\
+#EXTM3U
+#EXTINF:-1 group-title="News",IN: BBC News
+http://bbc.example.com/live.m3u8
+#EXTINF:-1 group-title="News",IN: CNN International
+http://cnn.example.com/live.m3u8
+#EXTINF:-1 group-title="Sports",ESPN HD
+http://espn.example.com/live.m3u8
+#EXTINF:-1,No Group Channel
+http://nogroup.example.com/live.m3u8
+"""
+
+
+def test_slugify():
+    assert slugify("IN: BBC News") == "bbc_news"
+    assert slugify("ESPN HD") == "espn_hd"
+    assert slugify("Hello World!") == "hello_world"
+    assert slugify("  leading-trailing  ") == "leading_trailing"
+    assert slugify("US: Fox News") == "fox_news"
+
+
+def test_convert_m3u_to_json(tmp_path):
+    m3u_file = tmp_path / "test.m3u"
+    m3u_file.write_text(SAMPLE_M3U)
+    json_file = tmp_path / "test.json"
+
+    result = convert_m3u_to_json(str(m3u_file), str(json_file))
+    assert result == str(json_file)
+    assert json_file.exists()
+
+    data = json.loads(json_file.read_text())
+    assert isinstance(data, list)
+    assert len(data) == 4
+
+    # Check first channel
+    assert data[0]["name"] == "IN: BBC News"
+    assert data[0]["url"] == "http://bbc.example.com/live.m3u8"
+    assert data[0]["group"] == "News"
+
+    # Check channel without group
+    assert data[3]["name"] == "No Group Channel"
+    assert data[3]["group"] == ""
+
+
+def test_convert_m3u_to_json_empty_file(tmp_path):
+    m3u_file = tmp_path / "empty.m3u"
+    m3u_file.write_text("")
+    json_file = tmp_path / "empty.json"
+
+    result = convert_m3u_to_json(str(m3u_file), str(json_file))
+    assert result is None
+
+
+def test_convert_m3u_to_json_missing_file(tmp_path):
+    json_file = tmp_path / "out.json"
+    result = convert_m3u_to_json("/nonexistent/file.m3u", str(json_file))
+    assert result is None
+
+
+def test_convert_m3u_to_json_no_channels(tmp_path):
+    m3u_file = tmp_path / "header_only.m3u"
+    m3u_file.write_text("#EXTM3U\n# Just comments\n")
+    json_file = tmp_path / "header_only.json"
+
+    result = convert_m3u_to_json(str(m3u_file), str(json_file))
+    assert result is None
+
+
+def test_convert_m3u_compatible_with_channel_search(tmp_path, monkeypatch):
+    """Verify converted JSON works with the existing channel search."""
+    m3u_file = tmp_path / "channels.m3u"
+    m3u_file.write_text(SAMPLE_M3U)
+    json_file = tmp_path / "channels.json"
+    convert_m3u_to_json(str(m3u_file), str(json_file))
+
+    monkeypatch.setattr("bot.utils.channels.CHANNEL_LIST_DIR", str(tmp_path))
+    results = search_channels("BBC")
+    assert len(results) == 1
+    assert results[0]["name"] == "IN: BBC News"
+    assert results[0]["url"] == "http://bbc.example.com/live.m3u8"

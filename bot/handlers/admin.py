@@ -22,6 +22,7 @@ from bot.db.database import (
     set_tier,
 )
 from bot.utils.channels import list_json_files, remove_json_file
+from bot.utils.m3u_converter import convert_m3u_to_json
 from bot.utils.worker import cancel_task
 
 log = logging.getLogger(__name__)
@@ -121,6 +122,54 @@ def register(app: Client) -> None:
         dest = os.path.join(CHANNEL_LIST_DIR, fname)
         await reply.download(dest)
         await message.reply(f"✅ Saved channel list as `{fname}`.")
+
+    # ── /convert_m3u (reply to .m3u/.m3u8 file) ────────────────────────
+
+    @app.on_message(filters.command("convert_m3u") & filters.private)
+    async def cmd_convert_m3u(client: Client, message: Message) -> None:
+        if not await _check_admin(message):
+            return
+        reply = message.reply_to_message
+        if not reply or not reply.document:
+            await message.reply(
+                "⚠️ Reply to an `.m3u` or `.m3u8` file with "
+                "`/convert_m3u` to convert it to a JSON channel list."
+            )
+            return
+        fname = reply.document.file_name or "playlist.m3u"
+        if not fname.endswith((".m3u", ".m3u8")):
+            await message.reply("⚠️ The file must be an `.m3u` or `.m3u8` file.")
+            return
+
+        status = await message.reply("🔄 Converting M3U to JSON…")
+
+        # Download the M3U file to a temporary location
+        os.makedirs(CHANNEL_LIST_DIR, exist_ok=True)
+        m3u_path = os.path.join(CHANNEL_LIST_DIR, fname)
+        await reply.download(m3u_path)
+
+        # Derive JSON filename from the M3U filename
+        json_fname = os.path.splitext(fname)[0] + ".json"
+        json_path = os.path.join(CHANNEL_LIST_DIR, json_fname)
+
+        result = convert_m3u_to_json(m3u_path, json_path)
+
+        # Clean up the downloaded M3U file
+        try:
+            os.remove(m3u_path)
+        except OSError:
+            pass
+
+        if result is None:
+            await status.edit(
+                "❌ Conversion failed. Make sure the file is a valid M3U playlist."
+            )
+            return
+
+        await status.edit(
+            f"✅ Converted and saved as `{json_fname}`.\n"
+            f"The channel list is now available for `/search`."
+        )
 
     # ── /remove_m3u8 <filename> ──────────────────────────────────────────
 
