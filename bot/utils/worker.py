@@ -197,7 +197,6 @@ async def cancel_user_tasks(user_id: int) -> int:
         if tid not in active_recordings:
             _cancelled_tasks.add(tid)
             count += 1
-    # Bulk-delete from DB
-    count_db = await delete_user_tasks(user_id)
-    # Return the larger of the two counts (avoid double-counting)
-    return max(count, count_db)
+    # Bulk-delete all remaining DB entries for this user
+    await delete_user_tasks(user_id)
+    return count

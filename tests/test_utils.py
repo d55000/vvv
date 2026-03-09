@@ -193,7 +193,7 @@ def test_tier_config():
     for tier in TIER_CONFIG.values():
         assert "max_duration" in tier
         assert "max_tasks" in tier
-    assert TIER_CONFIG["default"]["max_tasks"] <= TIER_CONFIG["premium"]["max_tasks"]
+    assert TIER_CONFIG["default"]["max_tasks"] < TIER_CONFIG["premium"]["max_tasks"]
     assert TIER_CONFIG["default"]["max_tasks"] == 2
 
 
