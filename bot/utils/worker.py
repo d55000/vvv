@@ -67,7 +67,8 @@ def _needs_n3u8dl(task: dict) -> bool:
         return True
     url = task.get("url", "")
     # DASH/MPD streams require N3U8DL-RE for proper handling
-    if ".mpd" in url.split("?")[0].lower():
+    path = url.split("?")[0].lower()
+    if path.endswith(".mpd"):
         return True
     return False
 

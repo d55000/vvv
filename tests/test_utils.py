@@ -529,13 +529,14 @@ def test_parse_exthttp():
 
 def test_build_n3u8dl_cmd_basic():
     from bot.utils.n3u8dl import build_n3u8dl_cmd
+    from bot.config import N3U8DL_PATH
 
     cmd = build_n3u8dl_cmd(
         "https://example.com/stream.mpd",
         save_dir="/tmp/out",
         save_name="test",
     )
-    assert cmd[0] != ""  # has a binary name
+    assert cmd[0] == N3U8DL_PATH
     assert "https://example.com/stream.mpd" in cmd
     assert "--save-dir" in cmd
     assert "/tmp/out" in cmd
