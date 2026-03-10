@@ -24,6 +24,22 @@ def slugify(text: str) -> str:
     return text.strip('_')
 
 
+def _parse_exthttp(line: str) -> dict[str, str]:
+    """Parse ``#EXTHTTP:{...}`` JSON into a plain dict of headers."""
+    raw = line.split(":", 1)[1].strip() if ":" in line else ""
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            result: dict[str, str] = {}
+            for k, v in obj.items():
+                # Normalise header names: cookie → Cookie
+                result[k.strip().title()] = str(v).strip()
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return {}
+
+
 def convert_m3u_to_json(
     m3u_filepath: str,
     json_filepath: str,
@@ -31,8 +47,18 @@ def convert_m3u_to_json(
     """Parse an M3U/M3U8 file and write the channels as a JSON list.
 
     Each channel becomes a dict with ``name``, ``url``, and ``group`` keys.
-    The output is a JSON **list** so it is directly compatible with the
-    existing :func:`bot.utils.channels._load_all_channels` loader.
+    Channels that include ``#KODIPROP``, ``#EXTVLCOPT``, or ``#EXTHTTP``
+    directives will also have ``headers`` and/or ``drm`` keys:
+
+    .. code-block:: json
+
+       {
+         "name": "Sony Yay Hindi",
+         "url": "https://…/index.mpd?…",
+         "group": "Kids",
+         "headers": {"User-Agent": "…", "Cookie": "…"},
+         "drm": {"type": "clearkey", "key": "kid:key"}
+       }
 
     Returns the *json_filepath* on success, or ``None`` on failure.
     """
@@ -53,6 +79,8 @@ def convert_m3u_to_json(
         return None
 
     current_info: dict = {}
+    current_headers: dict[str, str] = {}
+    current_drm: dict[str, str] = {}
 
     for line in lines:
         line = line.strip()
@@ -70,14 +98,43 @@ def convert_m3u_to_json(
                 'group_title': group_title,
                 'name': channel_name,
             }
+            # Reset per-channel accumulated directives
+            current_headers = {}
+            current_drm = {}
+
+        elif line.startswith('#KODIPROP:'):
+            prop_val = line.split(":", 1)[1].strip() if ":" in line else ""
+            if "license_type=" in prop_val:
+                current_drm["type"] = prop_val.rsplit("=", 1)[-1].strip()
+            elif "license_key=" in prop_val:
+                current_drm["key"] = prop_val.rsplit("=", 1)[-1].strip()
+
+        elif line.startswith('#EXTVLCOPT:'):
+            opt = line.split(":", 1)[1].strip() if ":" in line else ""
+            if opt.startswith("http-user-agent="):
+                current_headers["User-Agent"] = opt.split("=", 1)[1].strip()
+            elif opt.startswith("http-referrer="):
+                current_headers["Referer"] = opt.split("=", 1)[1].strip()
+            elif opt.startswith("http-origin="):
+                current_headers["Origin"] = opt.split("=", 1)[1].strip()
+
+        elif line.startswith('#EXTHTTP:'):
+            current_headers.update(_parse_exthttp(line))
 
         elif (line.startswith('http://') or line.startswith('https://')) and 'name' in current_info:
-            channels.append({
+            entry: dict = {
                 "name": current_info['name'],
                 "url": line,
                 "group": current_info.get('group_title', ''),
-            })
+            }
+            if current_headers:
+                entry["headers"] = dict(current_headers)
+            if current_drm:
+                entry["drm"] = dict(current_drm)
+            channels.append(entry)
             current_info = {}
+            current_headers = {}
+            current_drm = {}
 
     if not channels:
         log.warning("No channels found in M3U file: %s", m3u_filepath)

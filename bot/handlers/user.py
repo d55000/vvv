@@ -180,6 +180,8 @@ def register(app: Client) -> None:
         # Resolve channel name → URL when source is not an HTTP link
         if source.startswith(("http://", "https://")):
             url = source
+            ch_headers = None
+            ch_drm = None
         else:
             ch = get_channel_by_name(source)
             if not ch:
@@ -193,6 +195,8 @@ def register(app: Client) -> None:
                     f"⚠️ Channel **{source}** has no URL."
                 )
                 return
+            ch_headers = ch.get("headers")
+            ch_drm = ch.get("drm")
 
         # Check tier limits
         limits = await tier_limits(message.from_user.id)
@@ -218,7 +222,7 @@ def register(app: Client) -> None:
         status = await message.reply("🔍 **Analysing stream…** Please wait.")
 
         try:
-            probe_data = await probe_streams(url)
+            probe_data = await probe_streams(url, headers=ch_headers)
         except Exception as exc:
             await status.edit(f"❌ **Probe failed:** `{exc}`")
             return
@@ -247,6 +251,8 @@ def register(app: Client) -> None:
             "custom_duration": custom_duration,
             "custom_filename": args["filename"],
             "upload_mode": "file",
+            "headers": ch_headers,
+            "drm": ch_drm,
         }
 
         await status.edit(
@@ -340,6 +346,10 @@ def register(app: Client) -> None:
             "custom_filename": state.get("custom_filename"),
             "upload_mode": upload_mode,
         }
+        if state.get("headers"):
+            task["headers"] = state["headers"]
+        if state.get("drm"):
+            task["drm"] = state["drm"]
 
         await enqueue(task)
 
@@ -495,7 +505,10 @@ def register(app: Client) -> None:
             await cq.answer("No URL for this channel.", show_alert=True)
             return
         await cq.answer("Analysing stream…")
-        await _start_probe_flow(client, cq.from_user.id, cq.message.chat.id, url)
+        await _start_probe_flow(
+            client, cq.from_user.id, cq.message.chat.id, url,
+            headers=ch.get("headers"), drm=ch.get("drm"),
+        )
 
     # ── /channel <name> ──────────────────────────────────────────────────
 
@@ -517,7 +530,10 @@ def register(app: Client) -> None:
             return
         # Trigger recording with probe
         await message.reply(f"Found **{ch.get('name', '')}** → starting analysis…")
-        await _start_probe_flow(client, message.from_user.id, message.chat.id, url)
+        await _start_probe_flow(
+            client, message.from_user.id, message.chat.id, url,
+            headers=ch.get("headers"), drm=ch.get("drm"),
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -531,6 +547,8 @@ async def _start_probe_flow(
     custom_duration: int | None = None,
     custom_filename: str | None = None,
     lang_index: int | None = None,
+    headers: dict[str, str] | None = None,
+    drm: dict[str, str] | None = None,
 ) -> None:
     """Run ffprobe on *url*, parse tracks, and send the selection keyboard."""
     limits = await tier_limits(user_id)
@@ -546,7 +564,7 @@ async def _start_probe_flow(
     status = await client.send_message(chat_id, "🔍 **Analysing stream…** Please wait.")
 
     try:
-        probe_data = await probe_streams(url)
+        probe_data = await probe_streams(url, headers=headers)
     except Exception as exc:
         await status.edit(f"❌ **Probe failed:** `{exc}`")
         return
@@ -573,6 +591,8 @@ async def _start_probe_flow(
         "custom_duration": custom_duration,
         "custom_filename": custom_filename,
         "upload_mode": "file",
+        "headers": headers,
+        "drm": drm,
     }
 
     await status.edit(

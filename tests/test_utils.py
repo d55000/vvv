@@ -447,3 +447,168 @@ def test_build_track_keyboard_video_selected():
     assert any("✅" in t and "Video" in t for t in texts)
     assert not any("✅" in t and "File" in t for t in texts)
     _probe_cache.pop(uid, None)
+
+
+# ── Enhanced M3U converter (KODIPROP / EXTVLCOPT / EXTHTTP) ──────────────
+
+
+SAMPLE_DRM_M3U = """\
+#EXTM3U
+#EXTINF:-1 tvg-id="2008" group-title="Kids" tvg-logo="https://example.com/logo.png",Sony Yay Hindi
+#KODIPROP:inputstream.adaptive.license_type=clearkey
+#KODIPROP:inputstream.adaptive.license_key=271a8e6c5d9d5696a11c474a5c18371c:d6e2ece0c28b900dc6a868991cdf2517
+#EXTVLCOPT:http-user-agent=@allinone_reborn
+#EXTHTTP:{"cookie":"hdnea=st=1773041749~exp=1773128149~acl=/*~hmac=abcdef"}
+https://example.com/stream/index.mpd?hdnea=xyz
+
+#EXTINF:-1 tvg-id="100" group-title="News",IN: BBC News
+http://bbc.example.com/live.m3u8
+"""
+
+
+def test_convert_m3u_drm_headers(tmp_path):
+    """KODIPROP/EXTVLCOPT/EXTHTTP directives are captured in channel JSON."""
+    m3u_file = tmp_path / "drm.m3u"
+    m3u_file.write_text(SAMPLE_DRM_M3U)
+    json_file = tmp_path / "drm.json"
+
+    result = convert_m3u_to_json(str(m3u_file), str(json_file))
+    assert result is not None
+
+    data = json.loads(json_file.read_text())
+    assert len(data) == 2
+
+    # First channel has DRM + headers
+    ch1 = data[0]
+    assert ch1["name"] == "Sony Yay Hindi"
+    assert ch1["url"].endswith("index.mpd?hdnea=xyz")
+    assert ch1["group"] == "Kids"
+    assert "headers" in ch1
+    assert ch1["headers"]["User-Agent"] == "@allinone_reborn"
+    assert "Cookie" in ch1["headers"]
+    assert "drm" in ch1
+    assert ch1["drm"]["type"] == "clearkey"
+    assert ":" in ch1["drm"]["key"]  # kid:key format
+
+    # Second channel has no DRM
+    ch2 = data[1]
+    assert ch2["name"] == "IN: BBC News"
+    assert "headers" not in ch2
+    assert "drm" not in ch2
+
+
+def test_convert_m3u_drm_compatible_with_search(tmp_path, monkeypatch):
+    """Channels with DRM metadata still work with search."""
+    m3u_file = tmp_path / "channels.m3u"
+    m3u_file.write_text(SAMPLE_DRM_M3U)
+    json_file = tmp_path / "channels.json"
+    convert_m3u_to_json(str(m3u_file), str(json_file))
+
+    monkeypatch.setattr("bot.utils.channels.CHANNEL_LIST_DIR", str(tmp_path))
+    results = search_channels("Sony")
+    assert len(results) == 1
+    assert results[0]["name"] == "Sony Yay Hindi"
+    assert "drm" in results[0]
+    assert results[0]["drm"]["type"] == "clearkey"
+
+
+def test_parse_exthttp():
+    """_parse_exthttp correctly parses JSON header lines."""
+    from bot.utils.m3u_converter import _parse_exthttp
+
+    result = _parse_exthttp('#EXTHTTP:{"cookie":"abc=123","user-agent":"bot"}')
+    assert result == {"Cookie": "abc=123", "User-Agent": "bot"}
+
+    # Invalid JSON returns empty dict
+    assert _parse_exthttp('#EXTHTTP:not json') == {}
+    assert _parse_exthttp('#EXTHTTP:') == {}
+
+
+# ── N3U8DL-RE command builder ────────────────────────────────────────────
+
+
+def test_build_n3u8dl_cmd_basic():
+    from bot.utils.n3u8dl import build_n3u8dl_cmd
+
+    cmd = build_n3u8dl_cmd(
+        "https://example.com/stream.mpd",
+        save_dir="/tmp/out",
+        save_name="test",
+    )
+    assert cmd[0] != ""  # has a binary name
+    assert "https://example.com/stream.mpd" in cmd
+    assert "--save-dir" in cmd
+    assert "/tmp/out" in cmd
+    assert "--save-name" in cmd
+    assert "test" in cmd
+
+
+def test_build_n3u8dl_cmd_with_drm():
+    from bot.utils.n3u8dl import build_n3u8dl_cmd
+
+    cmd = build_n3u8dl_cmd(
+        "https://example.com/stream.mpd",
+        save_dir="/tmp/out",
+        save_name="test",
+        drm={"type": "clearkey", "key": "abc123:def456"},
+    )
+    assert "--key" in cmd
+    key_idx = cmd.index("--key")
+    assert cmd[key_idx + 1] == "abc123:def456"
+
+
+def test_build_n3u8dl_cmd_with_headers():
+    from bot.utils.n3u8dl import build_n3u8dl_cmd
+
+    cmd = build_n3u8dl_cmd(
+        "https://example.com/stream.mpd",
+        save_dir="/tmp/out",
+        save_name="test",
+        headers={"User-Agent": "mybot", "Cookie": "abc=123"},
+    )
+    h_indices = [i for i, x in enumerate(cmd) if x == "-H"]
+    assert len(h_indices) == 2
+    header_vals = [cmd[i + 1] for i in h_indices]
+    assert any("User-Agent" in h for h in header_vals)
+    assert any("Cookie" in h for h in header_vals)
+
+
+def test_build_n3u8dl_cmd_with_duration():
+    from bot.utils.n3u8dl import build_n3u8dl_cmd
+
+    cmd = build_n3u8dl_cmd(
+        "https://example.com/stream.mpd",
+        save_dir="/tmp/out",
+        save_name="test",
+        duration=3661,  # 1h 1m 1s
+    )
+    assert "--live-duration" in cmd
+    dur_idx = cmd.index("--live-duration")
+    assert cmd[dur_idx + 1] == "01:01:01"
+
+
+# ── Worker _needs_n3u8dl ─────────────────────────────────────────────────
+
+
+def test_needs_n3u8dl_with_drm():
+    from bot.utils.worker import _needs_n3u8dl
+    assert _needs_n3u8dl({"url": "http://example.com/live.m3u8", "drm": {"key": "a:b"}})
+
+
+def test_needs_n3u8dl_with_mpd():
+    from bot.utils.worker import _needs_n3u8dl
+    assert _needs_n3u8dl({"url": "https://example.com/stream/index.mpd?token=abc"})
+
+
+def test_needs_n3u8dl_plain_m3u8():
+    from bot.utils.worker import _needs_n3u8dl
+    assert not _needs_n3u8dl({"url": "https://example.com/live.m3u8"})
+
+
+# ── N3U8DL_PATH config ──────────────────────────────────────────────────
+
+
+def test_n3u8dl_path_config():
+    from bot.config import N3U8DL_PATH
+    assert isinstance(N3U8DL_PATH, str)
+    assert len(N3U8DL_PATH) > 0

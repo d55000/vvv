@@ -16,16 +16,23 @@ log = logging.getLogger(__name__)
 # ── FFprobe ───────────────────────────────────────────────────────────────
 
 
-async def probe_streams(url: str) -> dict:
-    """Run ffprobe on *url* and return parsed JSON with stream info."""
-    cmd = [
-        "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
-        "-show_streams",
-        "-show_format",
-        url,
-    ]
+async def probe_streams(
+    url: str,
+    headers: dict[str, str] | None = None,
+) -> dict:
+    """Run ffprobe on *url* and return parsed JSON with stream info.
+
+    *headers* is an optional dict of HTTP headers (e.g. User-Agent, Cookie)
+    to pass to ffprobe via ``-headers``.
+    """
+    cmd = ["ffprobe", "-v", "quiet", "-print_format", "json"]
+
+    if headers:
+        hdr_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        cmd.extend(["-headers", hdr_str])
+
+    cmd.extend(["-show_streams", "-show_format", url])
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -243,3 +250,64 @@ def format_progress(rec: RecordingProcess, duration_sec: int) -> str:
         f"💾 Size: **{size_mb:.1f} MB**\n"
         f"🚀 Speed: **{rec.speed}**"
     )
+
+
+# ── Video metadata helpers ────────────────────────────────────────────────
+
+
+async def get_video_duration(filepath: str) -> int:
+    """Return the duration of *filepath* in whole seconds (0 on failure)."""
+    cmd = [
+        "ffprobe",
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_format",
+        filepath,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        data = json.loads(stdout.decode())
+        return int(float(data.get("format", {}).get("duration", 0)))
+    except Exception as exc:
+        log.warning("get_video_duration failed for %s: %s", filepath, exc)
+        return 0
+
+
+async def generate_thumbnail(
+    filepath: str,
+    thumb_path: str | None = None,
+) -> str | None:
+    """Create a JPEG thumbnail for *filepath*.
+
+    Returns the thumbnail path on success or ``None`` on failure.
+    """
+    if thumb_path is None:
+        thumb_path = filepath + ".thumb.jpg"
+
+    # Seek to 1 second (or start if shorter) and grab one frame
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", "1",
+        "-i", filepath,
+        "-vframes", "1",
+        "-an",
+        "-vf", "scale=320:-1",
+        thumb_path,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=15)
+        if proc.returncode == 0 and os.path.isfile(thumb_path):
+            return thumb_path
+    except Exception as exc:
+        log.warning("generate_thumbnail failed for %s: %s", filepath, exc)
+    return None

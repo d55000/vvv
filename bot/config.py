@@ -47,3 +47,6 @@ SHORTLINK_API_KEY = os.getenv("SHORTLINK_API_KEY", "")
 
 # Default verification validity period (hours) – overridden by /setverify
 DEFAULT_VERIFY_HOURS = int(os.getenv("DEFAULT_VERIFY_HOURS", "24"))
+
+# N3U8DL-RE binary path (empty = disabled)
+N3U8DL_PATH = os.getenv("N3U8DL_PATH", "N_m3u8DL-RE")
