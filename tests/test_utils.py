@@ -388,3 +388,62 @@ def test_build_record_cmd_single_audio_int():
 def test_admin_max_tasks_config():
     from bot.config import ADMIN_MAX_TASKS
     assert ADMIN_MAX_TASKS >= 10
+
+
+# ── Default verify hours config ──────────────────────────────────────────
+
+
+def test_default_verify_hours_config():
+    from bot.config import DEFAULT_VERIFY_HOURS
+    assert DEFAULT_VERIFY_HOURS > 0
+    assert isinstance(DEFAULT_VERIFY_HOURS, int)
+
+
+# ── Upload mode in track keyboard ────────────────────────────────────────
+
+
+def test_build_track_keyboard_has_upload_buttons():
+    """Track selection keyboard includes upload‑mode buttons."""
+    from bot.handlers.user import _build_track_keyboard, _probe_cache
+
+    uid = 999999
+    tracks = parse_tracks(SAMPLE_PROBE)
+    _probe_cache[uid] = {
+        "url": "http://test",
+        "tracks": tracks,
+        "selected_video": 0,
+        "selected_audio": {2},
+        "custom_duration": None,
+        "custom_filename": None,
+        "upload_mode": "file",
+    }
+    kb = _build_track_keyboard(uid, tracks)
+    # Flatten all button texts
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("File" in t for t in texts)
+    assert any("Video" in t for t in texts)
+    # Default selection should be file
+    assert any("✅" in t and "File" in t for t in texts)
+    _probe_cache.pop(uid, None)
+
+
+def test_build_track_keyboard_video_selected():
+    """When upload_mode is video, the Video button shows ✅."""
+    from bot.handlers.user import _build_track_keyboard, _probe_cache
+
+    uid = 999998
+    tracks = parse_tracks(SAMPLE_PROBE)
+    _probe_cache[uid] = {
+        "url": "http://test",
+        "tracks": tracks,
+        "selected_video": 0,
+        "selected_audio": {2},
+        "custom_duration": None,
+        "custom_filename": None,
+        "upload_mode": "video",
+    }
+    kb = _build_track_keyboard(uid, tracks)
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("✅" in t and "Video" in t for t in texts)
+    assert not any("✅" in t and "File" in t for t in texts)
+    _probe_cache.pop(uid, None)

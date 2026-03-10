@@ -44,3 +44,6 @@ PROGRESS_INTERVAL = 7
 # Shortlink verification
 SHORTLINK_API_URL = os.getenv("SHORTLINK_API_URL", "")
 SHORTLINK_API_KEY = os.getenv("SHORTLINK_API_KEY", "")
+
+# Default verification validity period (hours) – overridden by /setverify
+DEFAULT_VERIFY_HOURS = int(os.getenv("DEFAULT_VERIFY_HOURS", "24"))

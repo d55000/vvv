@@ -1,6 +1,6 @@
 """MongoDB helpers – user tiers, tasks, admin list."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import motor.motor_asyncio
@@ -16,6 +16,7 @@ from bot.config import (
     PREMIUM_MAX_DURATION,
     PREMIUM_MAX_TASKS,
     ADMIN_MAX_TASKS,
+    DEFAULT_VERIFY_HOURS,
 )
 
 _client: Optional[motor.motor_asyncio.AsyncIOMotorClient] = None
@@ -33,6 +34,8 @@ async def connect() -> motor.motor_asyncio.AsyncIOMotorDatabase:
         await _db.tasks.create_index("task_id", unique=True)
         await _db.admins.create_index("user_id", unique=True)
         await _db.tokens.create_index("token", unique=True)
+        await _db.auth_groups.create_index("group_id", unique=True)
+        await _db.settings.create_index("key", unique=True)
     return _db
 
 
@@ -209,3 +212,87 @@ async def consume_token(token: str) -> bool:
         {"$set": {"used": True}},
     )
     return result.modified_count == 1
+
+
+# ── Auth‑group helpers ────────────────────────────────────────────────────
+
+
+async def add_auth_group(group_id: int) -> None:
+    db = get_db()
+    await db.auth_groups.update_one(
+        {"group_id": group_id},
+        {"$set": {"group_id": group_id}},
+        upsert=True,
+    )
+
+
+async def remove_auth_group(group_id: int) -> bool:
+    db = get_db()
+    result = await db.auth_groups.delete_one({"group_id": group_id})
+    return result.deleted_count == 1
+
+
+async def is_auth_group(group_id: int) -> bool:
+    db = get_db()
+    return await db.auth_groups.find_one({"group_id": group_id}) is not None
+
+
+async def get_all_auth_groups() -> list[int]:
+    db = get_db()
+    cursor = db.auth_groups.find()
+    docs = await cursor.to_list(length=200)
+    return [d["group_id"] for d in docs]
+
+
+# ── Bot‑wide settings helpers ─────────────────────────────────────────────
+
+
+async def get_setting(key: str, default=None):
+    db = get_db()
+    doc = await db.settings.find_one({"key": key})
+    if doc is None:
+        return default
+    return doc.get("value", default)
+
+
+async def set_setting(key: str, value) -> None:
+    db = get_db()
+    await db.settings.update_one(
+        {"key": key},
+        {"$set": {"key": key, "value": value}},
+        upsert=True,
+    )
+
+
+# ── Verification helpers ──────────────────────────────────────────────────
+
+
+async def get_verify_hours() -> int:
+    """Return the current verification validity period in hours."""
+    val = await get_setting("verify_hours")
+    if val is not None:
+        return int(val)
+    return DEFAULT_VERIFY_HOURS
+
+
+async def set_user_verified(user_id: int) -> None:
+    """Mark user as verified for the current configured interval."""
+    hours = await get_verify_hours()
+    until = datetime.now(timezone.utc) + timedelta(hours=hours)
+    db = get_db()
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"verified_until": until}},
+        upsert=True,
+    )
+
+
+async def is_user_verified(user_id: int) -> bool:
+    """Check if the user's verification is still valid."""
+    user = await get_user(user_id)
+    v = user.get("verified_until")
+    if v is None:
+        return False
+    if isinstance(v, datetime):
+        return v > datetime.now(timezone.utc)
+    return False

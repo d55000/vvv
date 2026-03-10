@@ -15,10 +15,15 @@ from pyrogram.types import (
 from bot.config import CHANNEL_LIST_DIR, OWNER_ID
 from bot.db.database import (
     add_admin,
+    add_auth_group,
     all_active_tasks,
     count_active_tasks,
+    get_all_auth_groups,
+    get_verify_hours,
     is_admin,
     remove_admin,
+    remove_auth_group,
+    set_setting,
     set_tier,
 )
 from bot.utils.channels import list_json_files, remove_json_file
@@ -72,6 +77,74 @@ def register(app: Client) -> None:
         target = int(parts[1].strip())
         await set_tier(target, "default")
         await message.reply(f"✅ User `{target}` downgraded to **Default**.")
+
+    # ── /authgroup <group_id> ────────────────────────────────────────────
+
+    @app.on_message(filters.command("authgroup") & filters.private)
+    async def cmd_authgroup(client: Client, message: Message) -> None:
+        if not await _check_admin(message):
+            return
+        parts = message.text.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip().lstrip("-").isdigit():
+            await message.reply("⚠️ Usage: `/authgroup <group_id>`")
+            return
+        gid = int(parts[1].strip())
+        await add_auth_group(gid)
+        await message.reply(f"✅ Group `{gid}` authorised.")
+
+    # ── /deauthgroup <group_id> ──────────────────────────────────────────
+
+    @app.on_message(filters.command("deauthgroup") & filters.private)
+    async def cmd_deauthgroup(client: Client, message: Message) -> None:
+        if not await _check_admin(message):
+            return
+        parts = message.text.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip().lstrip("-").isdigit():
+            await message.reply("⚠️ Usage: `/deauthgroup <group_id>`")
+            return
+        gid = int(parts[1].strip())
+        if await remove_auth_group(gid):
+            await message.reply(f"✅ Group `{gid}` removed.")
+        else:
+            await message.reply(f"⚠️ Group `{gid}` was not authorised.")
+
+    # ── /groups ──────────────────────────────────────────────────────────
+
+    @app.on_message(filters.command("groups") & filters.private)
+    async def cmd_groups(client: Client, message: Message) -> None:
+        if not await _check_admin(message):
+            return
+        groups = await get_all_auth_groups()
+        if not groups:
+            await message.reply("📭 No authorised groups.")
+            return
+        lines = ["📋 **Authorised Groups:**\n"]
+        for gid in groups:
+            lines.append(f"• `{gid}`")
+        await message.reply("\n".join(lines))
+
+    # ── /setverify <hours> ───────────────────────────────────────────────
+
+    @app.on_message(filters.command("setverify") & filters.private)
+    async def cmd_setverify(client: Client, message: Message) -> None:
+        if not await _check_admin(message):
+            return
+        parts = message.text.split(None, 1)
+        if len(parts) < 2 or not parts[1].strip().isdigit():
+            current = await get_verify_hours()
+            await message.reply(
+                f"⚠️ Usage: `/setverify <hours>`\n"
+                f"Current interval: **{current} hour(s)**."
+            )
+            return
+        hours = int(parts[1].strip())
+        if hours < 1:
+            await message.reply("⚠️ Minimum is 1 hour.")
+            return
+        await set_setting("verify_hours", hours)
+        await message.reply(
+            f"✅ Verification interval set to **{hours} hour(s)**."
+        )
 
     # ── /tasks (paginated) ───────────────────────────────────────────────
 

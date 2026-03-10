@@ -21,7 +21,12 @@ from bot.db.database import (
     count_active_tasks,
     get_tier,
     get_user,
+    get_verify_hours,
+    is_admin,
+    is_auth_group,
+    is_user_verified,
     set_tier,
+    set_user_verified,
     tier_limits,
     user_active_tasks,
 )
@@ -40,6 +45,43 @@ log = logging.getLogger(__name__)
 
 # Temporary cache: chat_id → probe result & selection state
 _probe_cache: dict[int, dict] = {}
+
+
+async def _check_access(message: Message) -> bool:
+    """Return True if the user may use bot commands in this chat.
+
+    Access is granted when any of the following is true:
+    * The chat is a private chat.
+    * The user is the owner or an admin.
+    * The chat (group) is an authorised group.
+
+    For non‑admin users in private chats that are **not** in an auth group,
+    a valid time‑based verification is required.
+    """
+    uid = message.from_user.id
+
+    # Owner / admin – always allowed
+    if uid == OWNER_ID or await is_admin(uid):
+        return True
+
+    # Group chat – only allowed if the group is authorised
+    if message.chat.type in ("group", "supergroup"):
+        if await is_auth_group(message.chat.id):
+            return True
+        # Not an auth group – silently ignore
+        return False
+
+    # Private chat – require valid verification
+    if await is_user_verified(uid):
+        return True
+
+    hours = await get_verify_hours()
+    await message.reply(
+        f"🔒 **Verification required.**\n\n"
+        f"Use `/verify <token>` to verify your account.\n"
+        f"Verification is valid for **{hours} hour(s)**."
+    )
+    return False
 
 # ── /rec argument parser ─────────────────────────────────────────────────
 
@@ -95,7 +137,7 @@ def register(app: Client) -> None:
 
     # ── /start ────────────────────────────────────────────────────────────
 
-    @app.on_message(filters.command("start") & filters.private)
+    @app.on_message(filters.command("start"))
     async def cmd_start(client: Client, message: Message) -> None:
         await message.reply(
             "👋 **Welcome to the M3U8 Recorder Bot!**\n\n"
@@ -116,8 +158,10 @@ def register(app: Client) -> None:
 
     # ── /rec <url> ────────────────────────────────────────────────────────
 
-    @app.on_message(filters.command("rec") & filters.private)
+    @app.on_message(filters.command("rec"))
     async def cmd_rec(client: Client, message: Message) -> None:
+        if not await _check_access(message):
+            return
         args = parse_rec_args(message.text)
         if not args:
             await message.reply(
@@ -202,6 +246,7 @@ def register(app: Client) -> None:
             "selected_audio": selected_audio,
             "custom_duration": custom_duration,
             "custom_filename": args["filename"],
+            "upload_mode": "file",
         }
 
         await status.edit(
@@ -250,6 +295,22 @@ def register(app: Client) -> None:
             reply_markup=_build_track_keyboard(uid, state["tracks"]),
         )
 
+    @app.on_callback_query(filters.regex(r"^upl:"))
+    async def cb_upload_mode(client: Client, cq: CallbackQuery) -> None:
+        mode = cq.data.split(":")[1]
+        uid = cq.from_user.id
+        state = _probe_cache.get(uid)
+        if not state:
+            await cq.answer("Session expired. Use /rec again.", show_alert=True)
+            return
+        state["upload_mode"] = mode
+        await cq.message.edit_text(
+            _build_track_selection_text(state["tracks"]),
+            reply_markup=_build_track_keyboard(uid, state["tracks"]),
+        )
+        label = "📹 Video" if mode == "video" else "📄 File"
+        await cq.answer(f"Upload as {label}")
+
     @app.on_callback_query(filters.regex(r"^start_rec$"))
     async def cb_start_rec(client: Client, cq: CallbackQuery) -> None:
         uid = cq.from_user.id
@@ -265,6 +326,7 @@ def register(app: Client) -> None:
         duration = state.get("custom_duration") or limits["max_duration"]
 
         audio_list = sorted(state["selected_audio"])
+        upload_mode = state.get("upload_mode", "file")
 
         task = {
             "task_id": task_id,
@@ -276,6 +338,7 @@ def register(app: Client) -> None:
             "audio_map": audio_list,
             "status": "queued",
             "custom_filename": state.get("custom_filename"),
+            "upload_mode": upload_mode,
         }
 
         await enqueue(task)
@@ -284,6 +347,7 @@ def register(app: Client) -> None:
         dur_h, dur_min = divmod(dur_min, 60)
         dur_str = f"{dur_h}h {dur_min}m {dur_sec}s" if dur_h else f"{dur_min}m {dur_sec}s"
 
+        upl_label = "📹 Video" if upload_mode == "video" else "📄 File"
         audio_str = ", ".join(f"#{a}" for a in audio_list)
         lines = [
             f"✅ **Task queued!**",
@@ -291,6 +355,7 @@ def register(app: Client) -> None:
             f"⏱ Duration: {dur_str}",
             f"📺 Video: track #{state['selected_video']}",
             f"🔊 Audio: track(s) {audio_str}",
+            f"📤 Upload: {upl_label}",
         ]
         if state.get("custom_filename"):
             lines.append(f"📝 Filename: {state['custom_filename']}")
@@ -300,7 +365,7 @@ def register(app: Client) -> None:
 
     # ── /cancel <task_id> ─────────────────────────────────────────────────
 
-    @app.on_message(filters.command("cancel") & filters.private)
+    @app.on_message(filters.command("cancel"))
     async def cmd_cancel(client: Client, message: Message) -> None:
         parts = message.text.split(None, 1)
         if len(parts) < 2:
@@ -325,7 +390,7 @@ def register(app: Client) -> None:
 
     # ── /cancelall ────────────────────────────────────────────────────────
 
-    @app.on_message(filters.command("cancelall") & filters.private)
+    @app.on_message(filters.command("cancelall"))
     async def cmd_cancelall(client: Client, message: Message) -> None:
         count = await cancel_user_tasks(message.from_user.id)
         if count:
@@ -335,7 +400,7 @@ def register(app: Client) -> None:
 
     # ── /mytasks ──────────────────────────────────────────────────────────
 
-    @app.on_message(filters.command("mytasks") & filters.private)
+    @app.on_message(filters.command("mytasks"))
     async def cmd_mytasks(client: Client, message: Message) -> None:
         tasks = await user_active_tasks(message.from_user.id)
         if not tasks:
@@ -351,7 +416,7 @@ def register(app: Client) -> None:
 
     # ── /status ───────────────────────────────────────────────────────────
 
-    @app.on_message(filters.command("status") & filters.private)
+    @app.on_message(filters.command("status"))
     async def cmd_status(client: Client, message: Message) -> None:
         uptime = int(time.time() - BOT_START_TIME) if BOT_START_TIME else 0
         h, rem = divmod(uptime, 3600)
@@ -372,7 +437,7 @@ def register(app: Client) -> None:
 
     # ── /verify <token> ──────────────────────────────────────────────────
 
-    @app.on_message(filters.command("verify") & filters.private)
+    @app.on_message(filters.command("verify"))
     async def cmd_verify(client: Client, message: Message) -> None:
         parts = message.text.split(None, 1)
         if len(parts) < 2:
@@ -381,14 +446,21 @@ def register(app: Client) -> None:
         token = parts[1].strip()
         if await consume_token(token):
             await set_tier(message.from_user.id, "verified")
-            await message.reply("🎉 **Verification successful!** You're now Verified.")
+            await set_user_verified(message.from_user.id)
+            hours = await get_verify_hours()
+            await message.reply(
+                f"🎉 **Verification successful!** You're now Verified.\n"
+                f"⏳ Valid for **{hours} hour(s)**."
+            )
         else:
             await message.reply("❌ Invalid or already‑used token.")
 
     # ── /search <query> ──────────────────────────────────────────────────
 
-    @app.on_message(filters.command("search") & filters.private)
+    @app.on_message(filters.command("search"))
     async def cmd_search(client: Client, message: Message) -> None:
+        if not await _check_access(message):
+            return
         parts = message.text.split(None, 1)
         if len(parts) < 2:
             await message.reply("⚠️ Usage: `/search <query>`")
@@ -427,8 +499,10 @@ def register(app: Client) -> None:
 
     # ── /channel <name> ──────────────────────────────────────────────────
 
-    @app.on_message(filters.command("channel") & filters.private)
+    @app.on_message(filters.command("channel"))
     async def cmd_channel(client: Client, message: Message) -> None:
+        if not await _check_access(message):
+            return
         parts = message.text.split(None, 1)
         if len(parts) < 2:
             await message.reply("⚠️ Usage: `/channel <name>`")
@@ -498,6 +572,7 @@ async def _start_probe_flow(
         "selected_audio": selected_audio,
         "custom_duration": custom_duration,
         "custom_filename": custom_filename,
+        "upload_mode": "file",
     }
 
     await status.edit(
@@ -553,6 +628,15 @@ def _build_track_keyboard(
         )
     if arow:
         rows.append(arow)
+
+    # Upload mode buttons
+    cur_mode = state.get("upload_mode", "file")
+    file_label = "✅ 📄 File" if cur_mode == "file" else "📄 File"
+    video_label = "✅ 📹 Video" if cur_mode == "video" else "📹 Video"
+    rows.append([
+        InlineKeyboardButton(file_label, callback_data="upl:file"),
+        InlineKeyboardButton(video_label, callback_data="upl:video"),
+    ])
 
     # Start button
     rows.append([InlineKeyboardButton("✅ Start Recording", callback_data="start_rec")])

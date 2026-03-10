@@ -81,6 +81,7 @@ async def _worker(client: "Client") -> None:
         if isinstance(audio_map, int):
             audio_map = [audio_map]
         custom_filename: str | None = task.get("custom_filename")
+        upload_mode: str = task.get("upload_mode", "file")
 
         # Update status in DB
         task["status"] = "recording"
@@ -121,12 +122,20 @@ async def _worker(client: "Client") -> None:
                         f"🆔 Task: `{task_id}`"
                     )
                     try:
-                        await client.send_document(
-                            chat_id,
-                            fpath,
-                            caption=caption,
-                            force_document=True,
-                        )
+                        if upload_mode == "video":
+                            await client.send_video(
+                                chat_id,
+                                fpath,
+                                caption=caption,
+                                supports_streaming=True,
+                            )
+                        else:
+                            await client.send_document(
+                                chat_id,
+                                fpath,
+                                caption=caption,
+                                force_document=True,
+                            )
                     except Exception as exc:
                         log.error("Upload failed for %s: %s", fpath, exc)
                         await client.send_message(
