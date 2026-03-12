@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import re
 import shlex
 import time
@@ -32,6 +33,7 @@ from bot.db.database import (
 )
 from bot.utils.channels import get_channel_by_name, search_channels
 from bot.utils.ffmpeg import parse_tracks, probe_streams
+from bot.utils.m3u_converter import download_m3u_url
 from bot.utils.worker import (
     BOT_START_TIME,
     active_recordings,
@@ -45,6 +47,29 @@ log = logging.getLogger(__name__)
 
 # Temporary cache: chat_id → probe result & selection state
 _probe_cache: dict[int, dict] = {}
+
+# Cache for M3U playlist channels: user_id → list of channel dicts
+_m3u_cache: dict[int, list[dict]] = {}
+
+
+def _is_m3u_playlist_url(url: str) -> bool:
+    """Return True if *url* looks like an M3U/M3U8 playlist link (not a stream).
+
+    M3U URLs used as *playlists* (containing channel lists) typically end
+    in ``.m3u`` or ``.m3u8`` and often include ``/get.php``, ``/iptv``,
+    ``type=m3u`` or similar patterns.  We intentionally do **not** match
+    bare ``.m3u8`` that looks like a stream manifest (those go straight
+    to ffmpeg / N3U8DL-RE).
+    """
+    path_lower = url.split("?")[0].lower()
+    # Explicit .m3u extension (not .m3u8 – those are usually HLS manifests)
+    if path_lower.endswith(".m3u"):
+        return True
+    # Query-string hints common in IPTV providers
+    url_lower = url.lower()
+    if "type=m3u" in url_lower or "output=m3u" in url_lower:
+        return True
+    return False
 
 
 async def _check_access(message: Message) -> bool:
@@ -145,6 +170,7 @@ def register(app: Client) -> None:
             "auto‑split MP4 files.\n\n"
             "**Commands:**\n"
             '• `/rec [url]` – Record a stream\n'
+            '• `/rec [m3u_url]` – Browse channels from M3U playlist\n'
             '• `/rec "URL or Channel" HH:MM:SS "name" .L#` – Custom recording\n'
             "• `/cancel [task_id]` – Cancel a recording\n"
             "• `/cancelall` – Cancel all your recordings\n"
@@ -179,6 +205,10 @@ def register(app: Client) -> None:
 
         # Resolve channel name → URL when source is not an HTTP link
         if source.startswith(("http://", "https://")):
+            # Check if this is an M3U playlist URL (channel list)
+            if _is_m3u_playlist_url(source):
+                await _handle_m3u_url(client, message, source)
+                return
             url = source
             ch_headers = None
             ch_drm = None
@@ -569,8 +599,113 @@ def register(app: Client) -> None:
             headers=ch.get("headers"), drm=ch.get("drm"),
         )
 
+    # ── M3U playlist URL channel selection callback ──────────────────────
+
+    @app.on_callback_query(filters.regex(r"^m3u_ch:"))
+    async def cb_m3u_channel(client: Client, cq: CallbackQuery) -> None:
+        """Handle selection of a channel from a parsed M3U playlist."""
+        uid = cq.from_user.id
+        try:
+            idx = int(cq.data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            await cq.answer("Invalid selection.", show_alert=True)
+            return
+        channels = _m3u_cache.get(uid)
+        if not channels or idx < 0 or idx >= len(channels):
+            await cq.answer("Session expired. Use /rec again.", show_alert=True)
+            return
+        ch = channels[idx]
+        _m3u_cache.pop(uid, None)
+        url = ch.get("url", "")
+        if not url:
+            await cq.answer("No URL for this channel.", show_alert=True)
+            return
+        await cq.answer("Analysing stream…")
+        await _start_probe_flow(
+            client, uid, cq.message.chat.id, url,
+            headers=ch.get("headers"), drm=ch.get("drm"),
+        )
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────
+
+
+async def _handle_m3u_url(
+    client: Client, message: Message, m3u_url: str,
+) -> None:
+    """Download an M3U playlist from *m3u_url*, parse channels, and show
+    a selection keyboard so the user can pick which channel to record."""
+    import tempfile
+
+    status = await message.reply("🔄 **Downloading M3U playlist…** Please wait.")
+
+    # Download and parse the M3U into a temporary JSON
+    fd, tmp_json = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    try:
+        result = await download_m3u_url(m3u_url, tmp_json)
+        if result is None:
+            await status.edit(
+                "❌ Failed to download or parse the M3U playlist.\n"
+                "Make sure the URL points to a valid M3U file."
+            )
+            return
+        import json as _json
+        with open(tmp_json, "r", encoding="utf-8") as fh:
+            channels = _json.load(fh)
+    except Exception as exc:
+        log.error("M3U URL parse error: %s", exc)
+        await status.edit(f"❌ **Error parsing playlist:** {exc}")
+        return
+    finally:
+        try:
+            os.remove(tmp_json)
+        except OSError:
+            pass
+
+    if not channels:
+        await status.edit("⚠️ No channels found in the M3U playlist.")
+        return
+
+    uid = message.from_user.id
+
+    # If single channel, go straight to probe
+    if len(channels) == 1:
+        ch = channels[0]
+        await status.edit(
+            f"📺 Found **{ch.get('name', 'Unknown')}** → starting analysis…"
+        )
+        await _start_probe_flow(
+            client, uid, message.chat.id, ch.get("url", ""),
+            headers=ch.get("headers"), drm=ch.get("drm"),
+        )
+        return
+
+    # Multiple channels – cache them and show selection buttons
+    _m3u_cache[uid] = channels
+
+    # Show up to 30 channels to avoid Telegram button limits
+    display = channels[:30]
+    buttons = []
+    for i, ch in enumerate(display):
+        name = ch.get("name", "Unknown")
+        drm_tag = " 🔒" if ch.get("drm") else ""
+        buttons.append([
+            InlineKeyboardButton(
+                f"📺 {name}{drm_tag}",
+                callback_data=f"m3u_ch:{i}",
+            )
+        ])
+
+    extra = ""
+    if len(channels) > 30:
+        extra = f"\n\n_(Showing first 30 of {len(channels)} channels)_"
+
+    await status.edit(
+        f"📋 **Found {len(channels)} channel(s) in playlist:**{extra}\n"
+        "Select a channel to record:",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
 
 
 async def _start_probe_flow(

@@ -108,10 +108,18 @@ class N3U8DLProcess:
         )
         log.info("N3U8DL-RE cmd: %s", " ".join(cmd))
 
+        # N3U8DL-RE is a .NET application that requires libicu.
+        # Set DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 to avoid
+        # "Couldn't find a valid ICU package" crash on systems
+        # where libicu is not installed.
+        env = os.environ.copy()
+        env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
+
         self.proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
 
     async def wait(self) -> int:

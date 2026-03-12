@@ -824,3 +824,76 @@ def test_download_m3u_url_bad_scheme():
         download_m3u_url("ftp://bad/playlist.m3u", "/tmp/out.json")
     )
     assert result is None
+
+
+# ── _is_m3u_playlist_url detection ───────────────────────────────────────
+
+
+def test_is_m3u_playlist_url_m3u_extension():
+    """URLs ending in .m3u should be detected as M3U playlists."""
+    from bot.handlers.user import _is_m3u_playlist_url
+
+    assert _is_m3u_playlist_url("https://example.com/playlist.m3u") is True
+    assert _is_m3u_playlist_url("https://iptv.example.com/channels.m3u?token=abc") is True
+
+
+def test_is_m3u_playlist_url_type_param():
+    """URLs with type=m3u or output=m3u query params should be detected."""
+    from bot.handlers.user import _is_m3u_playlist_url
+
+    assert _is_m3u_playlist_url("https://iptv.example.com/get.php?type=m3u") is True
+    assert _is_m3u_playlist_url("https://iptv.example.com/get.php?output=m3u&token=abc") is True
+
+
+def test_is_m3u_playlist_url_not_m3u8_stream():
+    """Regular .m3u8 stream URLs should NOT be detected as M3U playlists."""
+    from bot.handlers.user import _is_m3u_playlist_url
+
+    assert _is_m3u_playlist_url("https://cdn.example.com/live/stream.m3u8") is False
+    assert _is_m3u_playlist_url("https://cdn.example.com/live/index.m3u8?token=abc") is False
+
+
+def test_is_m3u_playlist_url_not_mpd():
+    """MPD stream URLs should NOT be detected as M3U playlists."""
+    from bot.handlers.user import _is_m3u_playlist_url
+
+    assert _is_m3u_playlist_url("https://cdn.example.com/live/index.mpd") is False
+    assert _is_m3u_playlist_url("https://cdn.example.com/live/index.mpd?key=abc") is False
+
+
+def test_is_m3u_playlist_url_plain_url():
+    """Plain HTTP URLs without playlist indicators should not match."""
+    from bot.handlers.user import _is_m3u_playlist_url
+
+    assert _is_m3u_playlist_url("https://example.com/stream") is False
+    assert _is_m3u_playlist_url("https://example.com/video.mp4") is False
+
+
+# ── N3U8DL-RE environment variable ──────────────────────────────────────
+
+
+def test_n3u8dl_process_sets_dotnet_invariant():
+    """N3U8DLProcess.start() should set DOTNET_SYSTEM_GLOBALIZATION_INVARIANT."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from bot.utils.n3u8dl import N3U8DLProcess
+
+    proc = N3U8DLProcess()
+
+    captured_env = {}
+
+    async def fake_exec(*args, **kwargs):
+        captured_env.update(kwargs.get("env", {}))
+        mock_proc = AsyncMock()
+        mock_proc.pid = 12345
+        mock_proc.returncode = None
+        return mock_proc
+
+    with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+        asyncio.run(proc.start(
+            "https://example.com/stream.mpd",
+            "test123",
+            duration=60,
+        ))
+
+    assert captured_env.get("DOTNET_SYSTEM_GLOBALIZATION_INVARIANT") == "1"
