@@ -222,12 +222,12 @@ def register(app: Client) -> None:
         status = await message.reply("🔍 **Analysing stream…** Please wait.")
 
         # Check if this stream likely needs N3U8DL-RE (DRM or MPD)
-        _is_drm_mpd = bool(ch_drm) or url.split("?")[0].lower().endswith(".mpd")
+        is_drm_or_mpd = bool(ch_drm) or url.split("?")[0].lower().endswith(".mpd")
 
         try:
             probe_data = await probe_streams(url, headers=ch_headers)
         except Exception as exc:
-            if _is_drm_mpd:
+            if is_drm_or_mpd:
                 # DRM/MPD streams often can't be probed by ffprobe –
                 # skip track selection and let N3U8DL-RE handle it.
                 probe_data = None
@@ -240,7 +240,7 @@ def register(app: Client) -> None:
         else:
             tracks = {"video": [], "audio": []}
 
-        if not tracks["video"] and not tracks["audio"] and not _is_drm_mpd:
+        if not tracks["video"] and not tracks["audio"] and not is_drm_or_mpd:
             await status.edit("⚠️ No video/audio tracks found in the stream.")
             return
 
@@ -263,7 +263,7 @@ def register(app: Client) -> None:
             "custom_duration": custom_duration,
             "custom_filename": args["filename"],
             "upload_mode": "file",
-            "engine": "n3u8dl" if _is_drm_mpd else "auto",
+            "engine": "n3u8dl" if is_drm_or_mpd else "auto",
             "headers": ch_headers,
             "drm": ch_drm,
         }
@@ -598,12 +598,12 @@ async def _start_probe_flow(
     status = await client.send_message(chat_id, "🔍 **Analysing stream…** Please wait.")
 
     # Check if this stream likely needs N3U8DL-RE (DRM or MPD)
-    _is_drm_mpd = bool(drm) or url.split("?")[0].lower().endswith(".mpd")
+    is_drm_or_mpd = bool(drm) or url.split("?")[0].lower().endswith(".mpd")
 
     try:
         probe_data = await probe_streams(url, headers=headers)
     except Exception as exc:
-        if _is_drm_mpd:
+        if is_drm_or_mpd:
             probe_data = None
         else:
             await status.edit(f"❌ **Probe failed:** {exc}")
@@ -614,7 +614,7 @@ async def _start_probe_flow(
     else:
         tracks = {"video": [], "audio": []}
 
-    if not tracks["video"] and not tracks["audio"] and not _is_drm_mpd:
+    if not tracks["video"] and not tracks["audio"] and not is_drm_or_mpd:
         await status.edit("⚠️ No video/audio tracks found in the stream.")
         return
 
@@ -635,7 +635,7 @@ async def _start_probe_flow(
         "custom_duration": custom_duration,
         "custom_filename": custom_filename,
         "upload_mode": "file",
-        "engine": "n3u8dl" if _is_drm_mpd else "auto",
+        "engine": "n3u8dl" if is_drm_or_mpd else "auto",
         "headers": headers,
         "drm": drm,
     }
