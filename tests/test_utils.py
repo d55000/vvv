@@ -613,3 +613,127 @@ def test_n3u8dl_path_config():
     from bot.config import N3U8DL_PATH
     assert isinstance(N3U8DL_PATH, str)
     assert len(N3U8DL_PATH) > 0
+
+
+# ── Engine selection in track keyboard ───────────────────────────────────
+
+
+def test_build_track_keyboard_has_engine_buttons():
+    """Track selection keyboard includes engine‑selection buttons."""
+    from bot.handlers.user import _build_track_keyboard, _probe_cache
+
+    uid = 999990
+    tracks = parse_tracks(SAMPLE_PROBE)
+    _probe_cache[uid] = {
+        "url": "http://test",
+        "tracks": tracks,
+        "selected_video": 0,
+        "selected_audio": {2},
+        "custom_duration": None,
+        "custom_filename": None,
+        "upload_mode": "file",
+        "engine": "auto",
+    }
+    kb = _build_track_keyboard(uid, tracks)
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("Auto" in t for t in texts)
+    assert any("FFmpeg" in t for t in texts)
+    assert any("N3U8DL" in t for t in texts)
+    # Default selection should be auto
+    assert any("✅" in t and "Auto" in t for t in texts)
+    _probe_cache.pop(uid, None)
+
+
+def test_build_track_keyboard_ffmpeg_selected():
+    """When engine is ffmpeg, the FFmpeg button shows ✅."""
+    from bot.handlers.user import _build_track_keyboard, _probe_cache
+
+    uid = 999989
+    tracks = parse_tracks(SAMPLE_PROBE)
+    _probe_cache[uid] = {
+        "url": "http://test",
+        "tracks": tracks,
+        "selected_video": 0,
+        "selected_audio": {2},
+        "custom_duration": None,
+        "custom_filename": None,
+        "upload_mode": "file",
+        "engine": "ffmpeg",
+    }
+    kb = _build_track_keyboard(uid, tracks)
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("✅" in t and "FFmpeg" in t for t in texts)
+    assert not any("✅" in t and "Auto" in t for t in texts)
+    _probe_cache.pop(uid, None)
+
+
+def test_build_track_keyboard_n3u8dl_selected():
+    """When engine is n3u8dl, the N3U8DL button shows ✅."""
+    from bot.handlers.user import _build_track_keyboard, _probe_cache
+
+    uid = 999988
+    tracks = parse_tracks(SAMPLE_PROBE)
+    _probe_cache[uid] = {
+        "url": "http://test",
+        "tracks": tracks,
+        "selected_video": 0,
+        "selected_audio": {2},
+        "custom_duration": None,
+        "custom_filename": None,
+        "upload_mode": "file",
+        "engine": "n3u8dl",
+    }
+    kb = _build_track_keyboard(uid, tracks)
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any("✅" in t and "N3U8DL" in t for t in texts)
+    assert not any("✅" in t and "Auto" in t for t in texts)
+    _probe_cache.pop(uid, None)
+
+
+# ── Engine override in _needs_n3u8dl ─────────────────────────────────────
+
+
+def test_needs_n3u8dl_engine_ffmpeg_override():
+    """engine='ffmpeg' forces FFmpeg even for MPD/DRM tasks."""
+    from bot.utils.worker import _needs_n3u8dl
+    # MPD URL with engine=ffmpeg should return False
+    assert not _needs_n3u8dl({
+        "url": "https://example.com/stream/index.mpd?token=abc",
+        "engine": "ffmpeg",
+    })
+    # DRM task with engine=ffmpeg should return False
+    assert not _needs_n3u8dl({
+        "url": "http://example.com/live.m3u8",
+        "drm": {"key": "a:b"},
+        "engine": "ffmpeg",
+    })
+
+
+def test_needs_n3u8dl_engine_n3u8dl_override():
+    """engine='n3u8dl' forces N3U8DL-RE even for plain m3u8."""
+    from bot.utils.worker import _needs_n3u8dl
+    assert _needs_n3u8dl({
+        "url": "https://example.com/live.m3u8",
+        "engine": "n3u8dl",
+    })
+
+
+def test_needs_n3u8dl_engine_auto_unchanged():
+    """engine='auto' preserves existing auto-detect behavior."""
+    from bot.utils.worker import _needs_n3u8dl
+    # Plain m3u8 with auto → FFmpeg
+    assert not _needs_n3u8dl({
+        "url": "https://example.com/live.m3u8",
+        "engine": "auto",
+    })
+    # MPD with auto → N3U8DL
+    assert _needs_n3u8dl({
+        "url": "https://example.com/stream/index.mpd?token=abc",
+        "engine": "auto",
+    })
+    # DRM with auto → N3U8DL
+    assert _needs_n3u8dl({
+        "url": "http://example.com/live.m3u8",
+        "drm": {"key": "a:b"},
+        "engine": "auto",
+    })

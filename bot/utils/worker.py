@@ -62,7 +62,19 @@ async def _update_progress(
 
 
 def _needs_n3u8dl(task: dict) -> bool:
-    """Return True if the task should use N3U8DL-RE instead of FFmpeg."""
+    """Return True if the task should use N3U8DL-RE instead of FFmpeg.
+
+    The user may override auto-detection via the ``engine`` field:
+    * ``"auto"`` (default) – decide based on DRM / .mpd heuristics
+    * ``"ffmpeg"`` – always use FFmpeg
+    * ``"n3u8dl"`` – always use N3U8DL-RE
+    """
+    engine = task.get("engine", "auto")
+    if engine == "ffmpeg":
+        return False
+    if engine == "n3u8dl":
+        return True
+    # Auto-detect
     if task.get("drm"):
         return True
     url = task.get("url", "")

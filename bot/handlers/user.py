@@ -251,6 +251,7 @@ def register(app: Client) -> None:
             "custom_duration": custom_duration,
             "custom_filename": args["filename"],
             "upload_mode": "file",
+            "engine": "auto",
             "headers": ch_headers,
             "drm": ch_drm,
         }
@@ -317,6 +318,22 @@ def register(app: Client) -> None:
         label = "📹 Video" if mode == "video" else "📄 File"
         await cq.answer(f"Upload as {label}")
 
+    @app.on_callback_query(filters.regex(r"^eng:"))
+    async def cb_engine(client: Client, cq: CallbackQuery) -> None:
+        engine = cq.data.split(":")[1]
+        uid = cq.from_user.id
+        state = _probe_cache.get(uid)
+        if not state:
+            await cq.answer("Session expired. Use /rec again.", show_alert=True)
+            return
+        state["engine"] = engine
+        await cq.message.edit_text(
+            _build_track_selection_text(state["tracks"]),
+            reply_markup=_build_track_keyboard(uid, state["tracks"]),
+        )
+        labels = {"auto": "⚙️ Auto", "ffmpeg": "🎬 FFmpeg", "n3u8dl": "📦 N3U8DL-RE"}
+        await cq.answer(f"Engine: {labels.get(engine, engine)}")
+
     @app.on_callback_query(filters.regex(r"^start_rec$"))
     async def cb_start_rec(client: Client, cq: CallbackQuery) -> None:
         uid = cq.from_user.id
@@ -333,6 +350,7 @@ def register(app: Client) -> None:
 
         audio_list = sorted(state["selected_audio"])
         upload_mode = state.get("upload_mode", "file")
+        engine = state.get("engine", "auto")
 
         task = {
             "task_id": task_id,
@@ -345,6 +363,7 @@ def register(app: Client) -> None:
             "status": "queued",
             "custom_filename": state.get("custom_filename"),
             "upload_mode": upload_mode,
+            "engine": engine,
         }
         if state.get("headers"):
             task["headers"] = state["headers"]
@@ -358,6 +377,8 @@ def register(app: Client) -> None:
         dur_str = f"{dur_h}h {dur_min}m {dur_sec}s" if dur_h else f"{dur_min}m {dur_sec}s"
 
         upl_label = "📹 Video" if upload_mode == "video" else "📄 File"
+        eng_labels = {"auto": "⚙️ Auto", "ffmpeg": "🎬 FFmpeg", "n3u8dl": "📦 N3U8DL-RE"}
+        eng_label = eng_labels.get(engine, engine)
         audio_str = ", ".join(f"#{a}" for a in audio_list)
         lines = [
             f"✅ **Task queued!**",
@@ -366,6 +387,7 @@ def register(app: Client) -> None:
             f"📺 Video: track #{state['selected_video']}",
             f"🔊 Audio: track(s) {audio_str}",
             f"📤 Upload: {upl_label}",
+            f"🛠 Engine: {eng_label}",
         ]
         if state.get("custom_filename"):
             lines.append(f"📝 Filename: {state['custom_filename']}")
@@ -591,6 +613,7 @@ async def _start_probe_flow(
         "custom_duration": custom_duration,
         "custom_filename": custom_filename,
         "upload_mode": "file",
+        "engine": "auto",
         "headers": headers,
         "drm": drm,
     }
@@ -656,6 +679,17 @@ def _build_track_keyboard(
     rows.append([
         InlineKeyboardButton(file_label, callback_data="upl:file"),
         InlineKeyboardButton(video_label, callback_data="upl:video"),
+    ])
+
+    # Engine selection buttons
+    cur_eng = state.get("engine", "auto")
+    auto_label = "✅ ⚙️ Auto" if cur_eng == "auto" else "⚙️ Auto"
+    ffmpeg_label = "✅ 🎬 FFmpeg" if cur_eng == "ffmpeg" else "🎬 FFmpeg"
+    n3u8dl_label = "✅ 📦 N3U8DL" if cur_eng == "n3u8dl" else "📦 N3U8DL"
+    rows.append([
+        InlineKeyboardButton(auto_label, callback_data="eng:auto"),
+        InlineKeyboardButton(ffmpeg_label, callback_data="eng:ffmpeg"),
+        InlineKeyboardButton(n3u8dl_label, callback_data="eng:n3u8dl"),
     ])
 
     # Start button
