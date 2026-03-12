@@ -737,3 +737,52 @@ def test_needs_n3u8dl_engine_auto_unchanged():
         "drm": {"key": "a:b"},
         "engine": "auto",
     })
+
+
+# ── DRM/MPD empty tracks UI ─────────────────────────────────────────────
+
+
+def test_build_track_selection_text_drm_bypass():
+    """Empty tracks produce a DRM/MPD bypass message."""
+    from bot.handlers.user import _build_track_selection_text
+
+    text = _build_track_selection_text({"video": [], "audio": []})
+    assert "DRM" in text or "MPD" in text
+    assert "N3U8DL-RE" in text
+
+
+def test_build_track_selection_text_with_tracks():
+    """Non-empty tracks produce normal track listing."""
+    from bot.handlers.user import _build_track_selection_text
+
+    tracks = parse_tracks(SAMPLE_PROBE)
+    text = _build_track_selection_text(tracks)
+    assert "Video Tracks" in text
+    assert "Audio Tracks" in text
+
+
+def test_build_track_keyboard_empty_tracks():
+    """Keyboard with empty tracks still has engine, upload, and start buttons."""
+    from bot.handlers.user import _build_track_keyboard, _probe_cache
+
+    uid = 999980
+    tracks = {"video": [], "audio": []}
+    _probe_cache[uid] = {
+        "url": "http://test.mpd",
+        "tracks": tracks,
+        "selected_video": None,
+        "selected_audio": set(),
+        "custom_duration": None,
+        "custom_filename": None,
+        "upload_mode": "file",
+        "engine": "n3u8dl",
+    }
+    kb = _build_track_keyboard(uid, tracks)
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    # Should still have engine + upload + start buttons
+    assert any("N3U8DL" in t for t in texts)
+    assert any("File" in t for t in texts)
+    assert any("Start Recording" in t for t in texts)
+    # N3U8DL should be pre-selected
+    assert any("✅" in t and "N3U8DL" in t for t in texts)
+    _probe_cache.pop(uid, None)

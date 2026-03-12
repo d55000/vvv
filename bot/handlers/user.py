@@ -78,7 +78,7 @@ async def _check_access(message: Message) -> bool:
     hours = await get_verify_hours()
     await message.reply(
         f"🔒 **Verification required.**\n\n"
-        f"Use `/verify <token>` to verify your account.\n"
+        f"Use `/verify [token]` to verify your account.\n"
         f"Verification is valid for **{hours} hour(s)**."
     )
     return False
@@ -144,15 +144,15 @@ def register(app: Client) -> None:
             "📹 I can record M3U8/M3U live streams and send them as "
             "auto‑split MP4 files.\n\n"
             "**Commands:**\n"
-            '• `/rec <url>` – Record a stream\n'
+            '• `/rec [url]` – Record a stream\n'
             '• `/rec "URL or Channel" HH:MM:SS "name" .L#` – Custom recording\n'
-            "• `/cancel <task_id>` – Cancel a recording\n"
+            "• `/cancel [task_id]` – Cancel a recording\n"
             "• `/cancelall` – Cancel all your recordings\n"
             "• `/mytasks` – List your active recordings\n"
             "• `/status` – Bot statistics\n"
-            "• `/verify <token>` – Upgrade to Verified tier\n"
-            "• `/search <query>` – Search preloaded channel lists\n"
-            "• `/channel <name>` – Record a channel by name\n",
+            "• `/verify [token]` – Upgrade to Verified tier\n"
+            "• `/search [query]` – Search preloaded channel lists\n"
+            "• `/channel [name]` – Record a channel by name\n",
             disable_web_page_preview=True,
         )
 
@@ -166,7 +166,7 @@ def register(app: Client) -> None:
         if not args:
             await message.reply(
                 "⚠️ **Usage:**\n"
-                '`/rec <url>`\n'
+                '`/rec [url]`\n'
                 '`/rec "URL or Channel" HH:MM:SS "filename" .L#`\n\n'
                 "**Examples:**\n"
                 '`/rec https://example.com/stream.m3u8`\n'
@@ -221,14 +221,26 @@ def register(app: Client) -> None:
 
         status = await message.reply("🔍 **Analysing stream…** Please wait.")
 
+        # Check if this stream likely needs N3U8DL-RE (DRM or MPD)
+        _is_drm_mpd = bool(ch_drm) or url.split("?")[0].lower().endswith(".mpd")
+
         try:
             probe_data = await probe_streams(url, headers=ch_headers)
         except Exception as exc:
-            await status.edit(f"❌ **Probe failed:** `{exc}`")
-            return
+            if _is_drm_mpd:
+                # DRM/MPD streams often can't be probed by ffprobe –
+                # skip track selection and let N3U8DL-RE handle it.
+                probe_data = None
+            else:
+                await status.edit(f"❌ **Probe failed:** {exc}")
+                return
 
-        tracks = parse_tracks(probe_data)
-        if not tracks["video"] and not tracks["audio"]:
+        if probe_data is not None:
+            tracks = parse_tracks(probe_data)
+        else:
+            tracks = {"video": [], "audio": []}
+
+        if not tracks["video"] and not tracks["audio"] and not _is_drm_mpd:
             await status.edit("⚠️ No video/audio tracks found in the stream.")
             return
 
@@ -251,7 +263,7 @@ def register(app: Client) -> None:
             "custom_duration": custom_duration,
             "custom_filename": args["filename"],
             "upload_mode": "file",
-            "engine": "auto",
+            "engine": "n3u8dl" if _is_drm_mpd else "auto",
             "headers": ch_headers,
             "drm": ch_drm,
         }
@@ -401,7 +413,7 @@ def register(app: Client) -> None:
     async def cmd_cancel(client: Client, message: Message) -> None:
         parts = message.text.split(None, 1)
         if len(parts) < 2:
-            await message.reply("⚠️ Usage: `/cancel <task_id>`")
+            await message.reply("⚠️ Usage: `/cancel [task_id]`")
             return
         task_id = parts[1].strip()
         if await cancel_task(task_id):
@@ -473,7 +485,7 @@ def register(app: Client) -> None:
     async def cmd_verify(client: Client, message: Message) -> None:
         parts = message.text.split(None, 1)
         if len(parts) < 2:
-            await message.reply("⚠️ Usage: `/verify <token>`")
+            await message.reply("⚠️ Usage: `/verify [token]`")
             return
         token = parts[1].strip()
         if await consume_token(token):
@@ -495,7 +507,7 @@ def register(app: Client) -> None:
             return
         parts = message.text.split(None, 1)
         if len(parts) < 2:
-            await message.reply("⚠️ Usage: `/search <query>`")
+            await message.reply("⚠️ Usage: `/search [query]`")
             return
         results = search_channels(parts[1].strip())
         if not results:
@@ -540,7 +552,7 @@ def register(app: Client) -> None:
             return
         parts = message.text.split(None, 1)
         if len(parts) < 2:
-            await message.reply("⚠️ Usage: `/channel <name>`")
+            await message.reply("⚠️ Usage: `/channel [name]`")
             return
         ch = get_channel_by_name(parts[1].strip())
         if not ch:
@@ -585,14 +597,24 @@ async def _start_probe_flow(
 
     status = await client.send_message(chat_id, "🔍 **Analysing stream…** Please wait.")
 
+    # Check if this stream likely needs N3U8DL-RE (DRM or MPD)
+    _is_drm_mpd = bool(drm) or url.split("?")[0].lower().endswith(".mpd")
+
     try:
         probe_data = await probe_streams(url, headers=headers)
     except Exception as exc:
-        await status.edit(f"❌ **Probe failed:** `{exc}`")
-        return
+        if _is_drm_mpd:
+            probe_data = None
+        else:
+            await status.edit(f"❌ **Probe failed:** {exc}")
+            return
 
-    tracks = parse_tracks(probe_data)
-    if not tracks["video"] and not tracks["audio"]:
+    if probe_data is not None:
+        tracks = parse_tracks(probe_data)
+    else:
+        tracks = {"video": [], "audio": []}
+
+    if not tracks["video"] and not tracks["audio"] and not _is_drm_mpd:
         await status.edit("⚠️ No video/audio tracks found in the stream.")
         return
 
@@ -613,7 +635,7 @@ async def _start_probe_flow(
         "custom_duration": custom_duration,
         "custom_filename": custom_filename,
         "upload_mode": "file",
-        "engine": "auto",
+        "engine": "n3u8dl" if _is_drm_mpd else "auto",
         "headers": headers,
         "drm": drm,
     }
@@ -626,14 +648,20 @@ async def _start_probe_flow(
 
 def _build_track_selection_text(tracks: dict) -> str:
     lines = ["🎛 **Track Selection**\n"]
-    if tracks["video"]:
-        lines.append("**📺 Video Tracks:**")
-        for v in tracks["video"]:
-            lines.append(f"  • #{v['index']} – {v['resolution']} ({v['codec']})")
-    if tracks["audio"]:
-        lines.append("\n**🔊 Audio Tracks:**")
-        for a in tracks["audio"]:
-            lines.append(f"  • #{a['index']} – {a['language']} ({a['codec']})")
+    if not tracks["video"] and not tracks["audio"]:
+        lines.append(
+            "🔒 **DRM / MPD stream** – track selection is handled "
+            "automatically by N3U8DL-RE."
+        )
+    else:
+        if tracks["video"]:
+            lines.append("**📺 Video Tracks:**")
+            for v in tracks["video"]:
+                lines.append(f"  • #{v['index']} – {v['resolution']} ({v['codec']})")
+        if tracks["audio"]:
+            lines.append("\n**🔊 Audio Tracks:**")
+            for a in tracks["audio"]:
+                lines.append(f"  • #{a['index']} – {a['language']} ({a['codec']})")
     lines.append(
         "\nSelect your preferred tracks below, then tap **✅ Start Recording**."
     )

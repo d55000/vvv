@@ -220,7 +220,7 @@ async def _run_ffmpeg_task(
                     log.error("Upload failed for %s: %s", fpath, exc)
                     await client.send_message(
                         chat_id,
-                        f"⚠️ Upload failed for segment {idx}: `{exc}`",
+                        f"⚠️ Upload failed for segment {idx}: {exc}",
                     )
         else:
             await client.edit_message_text(
@@ -233,7 +233,7 @@ async def _run_ffmpeg_task(
         log.exception("Recording error for task %s", task_id)
         try:
             await client.edit_message_text(
-                chat_id, status_msg.id, f"❌ **Error:** `{exc}`"
+                chat_id, status_msg.id, f"❌ **Error:** {exc}"
             )
         except Exception:
             pass
@@ -312,7 +312,7 @@ async def _run_n3u8dl_task(
                     log.error("Upload failed for %s: %s", fpath, exc)
                     await client.send_message(
                         chat_id,
-                        f"⚠️ Upload failed for file {idx}: `{exc}`",
+                        f"⚠️ Upload failed for file {idx}: {exc}",
                     )
         else:
             await client.edit_message_text(
@@ -325,7 +325,7 @@ async def _run_n3u8dl_task(
         log.exception("N3U8DL-RE error for task %s", task_id)
         try:
             await client.edit_message_text(
-                chat_id, status_msg.id, f"❌ **Error:** `{exc}`"
+                chat_id, status_msg.id, f"❌ **Error:** {exc}"
             )
         except Exception:
             pass

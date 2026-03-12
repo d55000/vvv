@@ -58,7 +58,7 @@ def register(app: Client) -> None:
             return
         parts = message.text.split(None, 1)
         if len(parts) < 2 or not parts[1].strip().isdigit():
-            await message.reply("⚠️ Usage: `/auth <user_id>`")
+            await message.reply("⚠️ Usage: `/auth [user_id]`")
             return
         target = int(parts[1].strip())
         await set_tier(target, "premium")
@@ -72,7 +72,7 @@ def register(app: Client) -> None:
             return
         parts = message.text.split(None, 1)
         if len(parts) < 2 or not parts[1].strip().isdigit():
-            await message.reply("⚠️ Usage: `/deauth <user_id>`")
+            await message.reply("⚠️ Usage: `/deauth [user_id]`")
             return
         target = int(parts[1].strip())
         await set_tier(target, "default")
@@ -86,7 +86,7 @@ def register(app: Client) -> None:
             return
         parts = message.text.split(None, 1)
         if len(parts) < 2 or not parts[1].strip().lstrip("-").isdigit():
-            await message.reply("⚠️ Usage: `/authgroup <group_id>`")
+            await message.reply("⚠️ Usage: `/authgroup [group_id]`")
             return
         gid = int(parts[1].strip())
         await add_auth_group(gid)
@@ -100,7 +100,7 @@ def register(app: Client) -> None:
             return
         parts = message.text.split(None, 1)
         if len(parts) < 2 or not parts[1].strip().lstrip("-").isdigit():
-            await message.reply("⚠️ Usage: `/deauthgroup <group_id>`")
+            await message.reply("⚠️ Usage: `/deauthgroup [group_id]`")
             return
         gid = int(parts[1].strip())
         if await remove_auth_group(gid):
@@ -133,7 +133,7 @@ def register(app: Client) -> None:
         if len(parts) < 2 or not parts[1].strip().isdigit():
             current = await get_verify_hours()
             await message.reply(
-                f"⚠️ Usage: `/setverify <hours>`\n"
+                f"⚠️ Usage: `/setverify [hours]`\n"
                 f"Current interval: **{current} hour(s)**."
             )
             return
