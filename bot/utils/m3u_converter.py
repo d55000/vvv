@@ -173,10 +173,8 @@ async def download_m3u_url(
         return None
 
     # Download using curl (available on almost all systems)
-    with tempfile.NamedTemporaryFile(
-        suffix=".m3u", delete=False, mode="wb"
-    ) as tmp:
-        tmp_path = tmp.name
+    fd, tmp_path = tempfile.mkstemp(suffix=".m3u")
+    os.close(fd)
 
     try:
         proc = await asyncio.create_subprocess_exec(

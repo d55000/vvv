@@ -820,7 +820,7 @@ def test_download_m3u_url_bad_scheme():
     import asyncio
     from bot.utils.m3u_converter import download_m3u_url
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         download_m3u_url("ftp://bad/playlist.m3u", "/tmp/out.json")
     )
     assert result is None
