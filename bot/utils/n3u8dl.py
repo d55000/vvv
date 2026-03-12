@@ -61,10 +61,10 @@ def build_n3u8dl_cmd(
             cmd.extend(["--key", key_val])
 
     if duration and duration > 0:
-        # N3U8DL-RE uses --live-duration HH:MM:SS for live recording cap
+        # N3U8DL-RE uses --live-record-limit HH:MM:SS for live recording cap
         h, rem = divmod(duration, 3600)
         m, s = divmod(rem, 60)
-        cmd.extend(["--live-duration", f"{h:02d}:{m:02d}:{s:02d}"])
+        cmd.extend(["--live-record-limit", f"{h:02d}:{m:02d}:{s:02d}"])
 
     return cmd
 
@@ -115,9 +115,18 @@ class N3U8DLProcess:
         )
 
     async def wait(self) -> int:
+        """Wait for the process to finish, read and log stderr."""
         if self.proc is None:
             return -1
-        return await self.proc.wait()
+        stdout, stderr = await self.proc.communicate()
+        rc = self.proc.returncode or -1
+        if stderr:
+            text = stderr.decode(errors="replace").strip()
+            if text:
+                log.warning("N3U8DL-RE stderr (rc=%d):\n%s", rc, text)
+        if rc != 0:
+            log.warning("N3U8DL-RE exited with code %d", rc)
+        return rc
 
     def cancel(self) -> None:
         """Send SIGTERM to the process."""
@@ -131,13 +140,13 @@ class N3U8DLProcess:
                 pass
 
     def output_files(self) -> list[str]:
-        """Return sorted list of MP4 files in the output directory."""
+        """Return sorted list of media files in the output directory."""
         if not os.path.isdir(self.output_dir):
             return []
         files = sorted(
             os.path.join(self.output_dir, f)
             for f in os.listdir(self.output_dir)
-            if f.endswith((".mp4", ".mkv"))
+            if f.endswith((".mp4", ".mkv", ".ts"))
         )
         return files
 

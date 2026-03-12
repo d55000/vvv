@@ -583,8 +583,8 @@ def test_build_n3u8dl_cmd_with_duration():
         save_name="test",
         duration=3661,  # 1h 1m 1s
     )
-    assert "--live-duration" in cmd
-    dur_idx = cmd.index("--live-duration")
+    assert "--live-record-limit" in cmd
+    dur_idx = cmd.index("--live-record-limit")
     assert cmd[dur_idx + 1] == "01:01:01"
 
 
@@ -786,3 +786,41 @@ def test_build_track_keyboard_empty_tracks():
     # N3U8DL should be pre-selected
     assert any("✅" in t and "N3U8DL" in t for t in texts)
     _probe_cache.pop(uid, None)
+
+
+# ── N3U8DL output_files with .ts ─────────────────────────────────────────
+
+
+def test_n3u8dl_output_files_includes_ts(tmp_path):
+    """output_files() should detect .ts files in addition to .mp4/.mkv."""
+    from bot.utils.n3u8dl import N3U8DLProcess
+
+    proc = N3U8DLProcess()
+    proc.output_dir = str(tmp_path)
+
+    # Create test files
+    (tmp_path / "video.mp4").touch()
+    (tmp_path / "video.ts").touch()
+    (tmp_path / "video.mkv").touch()
+    (tmp_path / "readme.txt").touch()
+
+    files = proc.output_files()
+    basenames = [os.path.basename(f) for f in files]
+    assert "video.mp4" in basenames
+    assert "video.ts" in basenames
+    assert "video.mkv" in basenames
+    assert "readme.txt" not in basenames
+
+
+# ── download_m3u_url ─────────────────────────────────────────────────────
+
+
+def test_download_m3u_url_bad_scheme():
+    """download_m3u_url should reject non-HTTP URLs."""
+    import asyncio
+    from bot.utils.m3u_converter import download_m3u_url
+
+    result = asyncio.get_event_loop().run_until_complete(
+        download_m3u_url("ftp://bad/playlist.m3u", "/tmp/out.json")
+    )
+    assert result is None

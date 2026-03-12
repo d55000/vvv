@@ -27,7 +27,7 @@ from bot.db.database import (
     set_tier,
 )
 from bot.utils.channels import list_json_files, remove_json_file
-from bot.utils.m3u_converter import convert_m3u_to_json
+from bot.utils.m3u_converter import convert_m3u_to_json, download_m3u_url
 from bot.utils.worker import cancel_task
 
 log = logging.getLogger(__name__)
@@ -241,6 +241,54 @@ def register(app: Client) -> None:
 
         await status.edit(
             f"✅ Converted and saved as `{json_fname}`.\n"
+            f"The channel list is now available for `/search`."
+        )
+
+    # ── /addurl <m3u_url> [name] ─────────────────────────────────────────
+
+    @app.on_message(filters.command("addurl") & filters.private)
+    async def cmd_addurl(client: Client, message: Message) -> None:
+        if not await _check_admin(message):
+            return
+        parts = message.text.split(None, 2)
+        if len(parts) < 2:
+            await message.reply(
+                "⚠️ Usage: `/addurl [m3u_url] [name]`\n"
+                "Downloads an M3U/M3U8 playlist from a URL and converts "
+                "it to a JSON channel list.\n"
+                "Optional `[name]` sets the output filename (without extension)."
+            )
+            return
+        url = parts[1].strip()
+        if not url.startswith(("http://", "https://")):
+            await message.reply("⚠️ Please provide a valid HTTP/HTTPS URL.")
+            return
+
+        # Derive a name for the JSON file
+        if len(parts) >= 3 and parts[2].strip():
+            base_name = parts[2].strip()
+        else:
+            # Use the URL filename or a default
+            from urllib.parse import urlparse
+            path = urlparse(url).path
+            base_name = os.path.splitext(os.path.basename(path))[0] or "playlist"
+        json_fname = base_name + ".json"
+
+        status = await message.reply("🔄 Downloading and converting M3U playlist…")
+
+        os.makedirs(CHANNEL_LIST_DIR, exist_ok=True)
+        json_path = os.path.join(CHANNEL_LIST_DIR, json_fname)
+
+        result = await download_m3u_url(url, json_path)
+        if result is None:
+            await status.edit(
+                "❌ Failed to download or convert the playlist.\n"
+                "Make sure the URL points to a valid M3U/M3U8 file."
+            )
+            return
+
+        await status.edit(
+            f"✅ Downloaded and saved as `{json_fname}`.\n"
             f"The channel list is now available for `/search`."
         )
 

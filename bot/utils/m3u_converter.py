@@ -4,7 +4,9 @@ import json
 import logging
 import os
 import re
+import tempfile
 from typing import Optional
+from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
 
@@ -153,3 +155,47 @@ def convert_m3u_to_json(
         len(channels), m3u_filepath, json_filepath,
     )
     return json_filepath
+
+
+async def download_m3u_url(
+    url: str,
+    json_filepath: str,
+) -> Optional[str]:
+    """Download an M3U/M3U8 playlist from *url* and convert it to JSON.
+
+    Returns the *json_filepath* on success, or ``None`` on failure.
+    """
+    import asyncio
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        log.error("Unsupported URL scheme: %s", parsed.scheme)
+        return None
+
+    # Download using curl (available on almost all systems)
+    with tempfile.NamedTemporaryFile(
+        suffix=".m3u", delete=False, mode="wb"
+    ) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "curl", "-fsSL", "--max-time", "30", "-o", tmp_path, url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace").strip()
+            log.error("Failed to download M3U from %s: %s", url, err)
+            return None
+
+        return convert_m3u_to_json(tmp_path, json_filepath)
+    except Exception as exc:
+        log.error("Error downloading M3U from %s: %s", url, exc)
+        return None
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
