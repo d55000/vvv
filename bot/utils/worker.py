@@ -320,7 +320,7 @@ async def _run_n3u8dl_task(
                 "(exit code %d, stderr: %s)",
                 task_id,
                 rc,
-                proc.stderr_text[:300] if proc.stderr_text else "(empty)",
+                proc.stderr_text[:200] if proc.stderr_text else "(empty)",
             )
             diag = (
                 "⚠️ **No output files generated.** "
