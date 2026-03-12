@@ -1,6 +1,7 @@
 """User‑facing command handlers."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -51,15 +52,17 @@ _probe_cache: dict[int, dict] = {}
 # Cache for M3U playlist channels: user_id → list of channel dicts
 _m3u_cache: dict[int, list[dict]] = {}
 
+# Maximum channels to display as inline buttons (Telegram limit)
+_MAX_M3U_BUTTONS = 30
+
 
 def _is_m3u_playlist_url(url: str) -> bool:
-    """Return True if *url* looks like an M3U/M3U8 playlist link (not a stream).
+    """Return True if *url* looks like an M3U playlist link (channel list).
 
-    M3U URLs used as *playlists* (containing channel lists) typically end
-    in ``.m3u`` or ``.m3u8`` and often include ``/get.php``, ``/iptv``,
-    ``type=m3u`` or similar patterns.  We intentionally do **not** match
-    bare ``.m3u8`` that looks like a stream manifest (those go straight
-    to ffmpeg / N3U8DL-RE).
+    Matches URLs whose path ends in ``.m3u`` or whose query string
+    contains ``type=m3u`` / ``output=m3u``.  ``.m3u8`` is intentionally
+    **excluded** – those are HLS stream manifests, not IPTV playlists,
+    and should go straight to FFmpeg / N3U8DL-RE.
     """
     path_lower = url.split("?")[0].lower()
     # Explicit .m3u extension (not .m3u8 – those are usually HLS manifests)
@@ -650,9 +653,8 @@ async def _handle_m3u_url(
                 "Make sure the URL points to a valid M3U file."
             )
             return
-        import json as _json
         with open(tmp_json, "r", encoding="utf-8") as fh:
-            channels = _json.load(fh)
+            channels = json.load(fh)
     except Exception as exc:
         log.error("M3U URL parse error: %s", exc)
         await status.edit(f"❌ **Error parsing playlist:** {exc}")
@@ -684,8 +686,7 @@ async def _handle_m3u_url(
     # Multiple channels – cache them and show selection buttons
     _m3u_cache[uid] = channels
 
-    # Show up to 30 channels to avoid Telegram button limits
-    display = channels[:30]
+    display = channels[:_MAX_M3U_BUTTONS]
     buttons = []
     for i, ch in enumerate(display):
         name = ch.get("name", "Unknown")
@@ -698,8 +699,11 @@ async def _handle_m3u_url(
         ])
 
     extra = ""
-    if len(channels) > 30:
-        extra = f"\n\n_(Showing first 30 of {len(channels)} channels)_"
+    if len(channels) > _MAX_M3U_BUTTONS:
+        extra = (
+            f"\n\n_(Showing first {_MAX_M3U_BUTTONS} "
+            f"of {len(channels)} channels)_"
+        )
 
     await status.edit(
         f"📋 **Found {len(channels)} channel(s) in playlist:**{extra}\n"
