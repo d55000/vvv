@@ -588,6 +588,41 @@ def test_build_n3u8dl_cmd_with_duration():
     assert cmd[dur_idx + 1] == "01:01:01"
 
 
+# ── N3U8DLProcess.output_files recognises all media extensions ────────────
+
+
+def test_n3u8dl_output_files_finds_ts(tmp_path):
+    """output_files() should include .ts files produced by live recordings."""
+    from bot.utils.n3u8dl import N3U8DLProcess
+
+    proc = N3U8DLProcess()
+    proc.output_dir = str(tmp_path)
+    # Create sample files of various types
+    (tmp_path / "video.ts").write_text("data")
+    (tmp_path / "audio.m4a").write_text("data")
+    (tmp_path / "muxed.mp4").write_text("data")
+    (tmp_path / "muxed.mkv").write_text("data")
+    (tmp_path / "temp.tmp").write_text("data")
+
+    files = proc.output_files()
+    names = [os.path.basename(f) for f in files]
+    assert "video.ts" in names
+    assert "audio.m4a" in names
+    assert "muxed.mp4" in names
+    assert "muxed.mkv" in names
+    assert "temp.tmp" not in names
+
+
+def test_n3u8dl_output_files_empty_dir(tmp_path):
+    """output_files() returns empty list when directory has no media files."""
+    from bot.utils.n3u8dl import N3U8DLProcess
+
+    proc = N3U8DLProcess()
+    proc.output_dir = str(tmp_path)
+    (tmp_path / "readme.txt").write_text("data")
+    assert proc.output_files() == []
+
+
 # ── Worker _needs_n3u8dl ─────────────────────────────────────────────────
 
 

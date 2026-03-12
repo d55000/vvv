@@ -291,7 +291,7 @@ async def _run_n3u8dl_task(
             "⏳ This may take a while…",
         )
 
-        await proc.wait()
+        rc = await proc.wait()
 
         files = proc.output_files()
         if files:
@@ -315,10 +315,22 @@ async def _run_n3u8dl_task(
                         f"⚠️ Upload failed for file {idx}: {exc}",
                     )
         else:
-            await client.edit_message_text(
-                chat_id, status_msg.id,
+            log.warning(
+                "N3U8DL-RE produced no output files for task %s "
+                "(exit code %d, stderr: %s)",
+                task_id,
+                rc,
+                proc.stderr_text[:300] if proc.stderr_text else "(empty)",
+            )
+            diag = (
                 "⚠️ **No output files generated.** "
-                "The stream may be unavailable or DRM decryption failed.",
+                "The stream may be unavailable or DRM decryption failed."
+            )
+            if rc != 0:
+                snippet = proc.stderr_text[:200] if proc.stderr_text else "unknown error"
+                diag += f"\n\n🔍 Exit code: `{rc}`\n```\n{snippet}\n```"
+            await client.edit_message_text(
+                chat_id, status_msg.id, diag,
             )
 
     except Exception as exc:

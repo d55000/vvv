@@ -77,6 +77,8 @@ class N3U8DLProcess:
         self.cancelled = False
         self.output_dir: str = ""
         self.save_name: str = ""
+        self.returncode: int = -1
+        self.stderr_text: str = ""
 
     async def start(
         self,
@@ -117,7 +119,16 @@ class N3U8DLProcess:
     async def wait(self) -> int:
         if self.proc is None:
             return -1
-        return await self.proc.wait()
+        stdout, stderr = await self.proc.communicate()
+        self.returncode = self.proc.returncode or 0
+        self.stderr_text = (stderr or b"").decode(errors="replace").strip()
+        if self.returncode != 0:
+            log.warning(
+                "N3U8DL-RE exited with code %d: %s",
+                self.returncode,
+                self.stderr_text[:500] if self.stderr_text else "(no stderr)",
+            )
+        return self.returncode
 
     def cancel(self) -> None:
         """Send SIGTERM to the process."""
@@ -131,13 +142,13 @@ class N3U8DLProcess:
                 pass
 
     def output_files(self) -> list[str]:
-        """Return sorted list of MP4 files in the output directory."""
+        """Return sorted list of media files in the output directory."""
         if not os.path.isdir(self.output_dir):
             return []
         files = sorted(
             os.path.join(self.output_dir, f)
             for f in os.listdir(self.output_dir)
-            if f.endswith((".mp4", ".mkv"))
+            if f.endswith((".mp4", ".mkv", ".ts", ".m4a"))
         )
         return files
 
